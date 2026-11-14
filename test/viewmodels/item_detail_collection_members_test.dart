@@ -18,7 +18,6 @@ class _ItemsApi extends Mock implements ItemsApi {}
 class _PluginSyncService extends Mock implements PluginSyncService {}
 
 void main() {
-  setUpAll(() => registerFallbackValue(_Client()));
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _Client client;
@@ -68,6 +67,32 @@ void main() {
 
   tearDown(() => GetIt.instance.reset());
 
+  test('SpeshTV detail does not scan all collection memberships', () async {
+    if (!const bool.fromEnvironment('SPESHMEDIA_CLIENT')) return;
+    when(() => itemsApi.getItem('movie-1',
+        mediaSourceId: any(named: 'mediaSourceId'))).thenAnswer(
+      (_) async => {'Id': 'movie-1', 'Type': 'Movie', 'Name': 'Movie'},
+    );
+    when(() => itemsApi.getAncestors('movie-1'))
+        .thenAnswer((_) async => []);
+    final tmdb = TmdbRepository(client);
+    final vm = ItemDetailViewModel(
+      itemId: 'movie-1', client: client,
+      mutations: ItemMutationRepository(client),
+      mdbListRepository: MdbListRepository(client, tmdb),
+      tmdbRepository: tmdb,
+    );
+    await vm.load();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    verify(() => itemsApi.getAncestors('movie-1')).called(1);
+    verifyNever(() => itemsApi.getItems(
+      includeItemTypes: ['BoxSet'], recursive: true, sortBy: 'SortName',
+      fields: 'BasicSyncInfo,PrimaryImageAspectRatio,ImageTags,ProviderIds',
+      startIndex: 0, limit: 200, enableTotalRecordCount: true,
+    ));
+    vm.dispose();
+  });
+
   test('collection grid asks for the members themselves, episodes included',
       () async {
     final tmdb = TmdbRepository(client);
@@ -93,11 +118,8 @@ void main() {
 
   test('the playlist keeps the server order until another sort is picked',
       () async {
-    when(
-      () => GetIt.instance<PluginSyncService>().collectionOrderSupported(
-        any(),
-      ),
-    ).thenReturn(false);
+    when(() => GetIt.instance<PluginSyncService>().pluginAvailable)
+        .thenReturn(false);
     when(
       () => itemsApi.getItems(
         parentId: 'boxset-1',

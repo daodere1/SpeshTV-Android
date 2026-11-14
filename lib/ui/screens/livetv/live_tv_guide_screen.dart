@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,80 +7,57 @@ import 'package:go_router/go_router.dart';
 import 'package:moonfin_design/moonfin_design.dart';
 import 'package:server_core/server_core.dart';
 
-import '../../../data/models/series_recording_episodes.dart';
 import '../../../data/viewmodels/live_tv_guide_view_model.dart';
-import '../../../data/services/user_data_sync.dart';
+import '../../../preference/spesh_view_preferences.dart';
+import '../../../preference/spesh_recent_channels.dart';
+import '../../widgets/spesh_empty_results.dart';
+import '../../widgets/spesh_picker_now_next.dart';
 import '../../../l10n/app_localizations.dart';
-import '../../widgets/emby_premiere_dialog.dart';
-import '../../util/error_message.dart';
 import '../../../util/platform_detection.dart';
-import '../../../util/tv_ui_scale.dart';
+import '../../../util/tv_transform_trace.dart';
 import '../../../util/idiom/app_ui_idiom.dart';
 import '../../navigation/destinations.dart';
 import '../../widgets/adaptive/adaptive_dialog.dart';
-import '../../widgets/bounded_network_image.dart';
 import '../../widgets/horizontal_scroll_section.dart';
-import '../../widgets/live_tv/incomplete_recording.dart';
 import '../../widgets/live_tv/live_tv_mini_player.dart';
-import '../../widgets/live_tv/live_tv_recording_icon.dart';
-import '../../widgets/live_tv/series_recording_dialog.dart';
 import '../../widgets/overlay_sheet.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../../util/focus/dpad_keys.dart';
 import '../../../util/focus/key_event_utils.dart';
-import '../../../playback/external_player_policy.dart';
+import '../../../util/focus/guide_select_gesture.dart';
+import '../../../util/focus/guide_context_key.dart';
 import '../../../preference/user_preferences.dart';
 import '../../../preference/preference_constants.dart';
 import '../../../util/clock_format.dart';
 import 'epg/epg_genre.dart';
+import 'guide/guide_window.dart';
 import 'epg/widgets/epg_channel_cell.dart';
 import 'epg/widgets/epg_filter_rail.dart';
 import 'epg/widgets/epg_hero_preview.dart';
 import 'epg/widgets/epg_now_next_card.dart';
 import 'epg/widgets/epg_program_cell.dart';
-import 'guide/guide_cell.dart';
-import 'guide/guide_layout_profile.dart';
-import 'guide/guide_selection.dart';
-import 'guide/guide_window.dart';
-import 'live_tv_channel_player_loader.dart';
+import '../../widgets/spesh_brand.dart';
+import 'widgets/spesh_guide_controls.dart';
+import 'widgets/spesh_channel_filters.dart';
+import 'widgets/spesh_guide_control_focus.dart';
 
+const _kChannelColumnWidth = 160.0;
+const _kRowHeight = 84.0;
 // Start fetching the next batch of channel programs this many rows before the
 // lazily-loaded edge, so rows are usually populated by the time they're visible.
 const _kProgramPrefetchRows = 12;
-const _kGuideScrollLead = 24.0;
-const _kGuideLogoPrecacheRows = 24;
-// Extra rows of slack above/below the viewport carried into the artwork
-// prefetch window, so a small scroll doesn't immediately fall outside it.
-const _kArtworkPrefetchRowMargin = 5;
-
-/// How far back the guide will page. Most EPG sources keep little history,
-/// so beyond this the grid would only ever show empty cells.
-const _kMaxGuideHistory = Duration(hours: 24);
-
+const _kTimeHeaderHeight = 40.0;
+const _kPixelsPerMinute = 6.0;
+const _kMinGuideHours = 3;
+const _kMaxGuideHours = 12;
 const _kMiniPlayerWidth = 300.0;
 const _kMiniPlayerHeight = 168.0;
-// A re-anchor waits this long after the last d-pad event, so the window
-// never moves under an in-progress navigation.
-const _kReanchorInputQuiet = Duration(seconds: 1);
 
-/// Indices of the controls row's buttons, left to right. LEFT/RIGHT walk this
-/// range, so a button added to the row must take the next index in order.
-const int _kWindowBarPrevious = 0;
-const int _kWindowBarNow = 1;
-const int _kWindowBarNext = 2;
-const int _kWindowBarSort = 3;
-const int _kWindowBarDate = 4;
-const int _kWindowBarRecordings = 5;
-const int _kWindowBarLast = _kWindowBarRecordings;
-
-/// Handed to an embedded [LiveTvGuideScreen] so its host's [PopScope] can
-/// offer it a back press before closing the guide outright.
-class LiveTvGuideBackController {
-  bool Function()? _onBackPressed;
-
-  /// True when the guide consumed the press (it reset itself); false when
-  /// the host should proceed with its own close/exit handling.
-  bool consumeBackPress() => _onBackPressed?.call() ?? false;
+int _guideHoursForWidth(double availableWidth) {
+  final guideWidth = availableWidth - _kChannelColumnWidth;
+  if (guideWidth <= 0) return _kMinGuideHours;
+  final hours = (guideWidth / (_kPixelsPerMinute * 60)).floor();
+  return hours.clamp(_kMinGuideHours, _kMaxGuideHours);
 }
 
 class LiveTvGuideScreen extends StatefulWidget {
@@ -91,7 +67,7 @@ class LiveTvGuideScreen extends StatefulWidget {
 
   /// When true the guide is embedded inside another screen's widget tree (the
   /// in-player Live TV overlay in this case) rather than pushed as its own route.
-  /// In this mode the [Scaffold]/[SafeArea] chrome is dropped, the mini-player
+  /// In this mode the [Scaffold]/[SafeArea] chrome is dropped, the mini-player 
   /// frame is transparent (the host draws the real video behind it), and channel
   /// selection / close are reported via [onChannelSelected] / [onClose] instead
   /// of [Navigator] pops.
@@ -101,19 +77,13 @@ class LiveTvGuideScreen extends StatefulWidget {
   /// when [embedded]. Required for the in-player overlay; null on the standalone
   /// route (where the pop result is used).
   final ValueChanged<String>? onChannelSelected;
+  final void Function(String, List<GuideChannel>)? onChannelSelectedWithLineup;
 
   /// Called when the user dismisses the embedded guide (activates the
   /// mini-player frame) instead of `Navigator.pop()`.
   final VoidCallback? onClose;
-
-  /// Leaves the hosting player before opening recordings.
-  final Future<void> Function()? onOpenRecordings;
-
-  /// Lets an [embedded] host, which owns the only [PopScope] in its route,
-  /// give this screen first refusal on a back press so it can reset to its
-  /// entry state instead of always closing. Unused on the standalone route,
-  /// which handles this itself.
-  final LiveTvGuideBackController? backController;
+  final VoidCallback? onReturnHome;
+  final VoidCallback? onStopPreview;
 
   const LiveTvGuideScreen({
     super.key,
@@ -122,40 +92,28 @@ class LiveTvGuideScreen extends StatefulWidget {
     this.appleTvTextureId,
     this.embedded = false,
     this.onChannelSelected,
+    this.onChannelSelectedWithLineup,
     this.onClose,
-    this.onOpenRecordings,
-    this.backController,
+    this.onReturnHome,
+    this.onStopPreview,
   });
 
   /// Geometry of the mini-player video box in [embedded] mode, in the host
   /// overlay's coordinate space. Single source of truth shared with the host
   /// player so the real video surface it draws lines up with this frame:
-  /// content padding (top [_contentTopInset]=20 / left [guideContentLeftInset]=24)
+  /// content padding (top [_contentTopInset]=20 / left [_contentLeftInset]=24)
   /// plus the program-info header container padding (top 12 / left 16).
   static const double miniPlayerVideoLeft = 24 + 16;
   static const double miniPlayerVideoTop = 20 + 12;
   static const double miniPlayerVideoWidth = _kMiniPlayerWidth;
   static const double miniPlayerVideoHeight = _kMiniPlayerHeight;
+  static double previewWidth(double width) => (width - 80).clamp(120, _kMiniPlayerWidth);
 
   @override
   State<LiveTvGuideScreen> createState() => _LiveTvGuideScreenState();
 }
 
-/// A vertical move that couldn't be resolved when the key was pressed. At
-/// most one is held. It is superseded by the next navigation key and cancelled
-/// outright by anything that invalidates the destination.
-class _PendingVerticalMove {
-  final int targetRowIndex;
-  final DateTime anchorTime;
-
-  const _PendingVerticalMove({
-    required this.targetRowIndex,
-    required this.anchorTime,
-  });
-}
-
-class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
-    with WidgetsBindingObserver {
+class _LiveTvGuideScreenState extends State<LiveTvGuideScreen> {
   late final LiveTvGuideViewModel _vm;
   final _prefs = GetIt.instance<UserPreferences>();
   final _channelScrollController = ScrollController();
@@ -163,154 +121,94 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
   final _timeHeaderHorizontalScrollController = ScrollController();
   final _guideHorizontalScrollController = ScrollController();
   final _miniPlayerFocusNode = FocusNode(debugLabel: 'GuideMiniPlayer');
+  final _searchController = TextEditingController();
+  final _numberController = TextEditingController();
+  final _topControlScope = FocusScopeNode(debugLabel: 'GuideTopControls');
+  final _typeControlScope = FocusScopeNode(debugLabel: 'GuideTypeControls');
+  final _heroControlScope = FocusScopeNode(debugLabel: 'GuideHeroControls');
+  final _searchControlScope = FocusScopeNode(debugLabel: 'GuideSearchControls');
+  final _facetControlScope = FocusScopeNode(debugLabel: 'GuideFacetControls');
+  FocusScopeNode? _lastControlScope;
+  final _nowNextScrollController = ScrollController();
+  Timer? _searchDebounce;
+  TvTransformTrace? _transformTrace;
+  Timer? _pickerNowNextTimer;
+  Timer? _programPrefetch;
+  final _pendingProgramIds = <String>{};
+  bool _prefetching = false;
   final Map<int, FocusNode> _channelFocusNodes = {};
+  final Map<int, GlobalKey<_GuideProgramRowState>> _programRowKeys = {};
+  DateTime? _programAnchor;
   final Map<int, FocusNode> _filterFocusNodes = {};
-  final Map<int, FocusNode> _windowBarFocusNodes = {};
-
-  /// Where the controls row was left, so returning to it from either
-  /// direction lands where the user last was.
-  int _lastWindowBarIndex = _kWindowBarPrevious;
 
   bool _syncingScroll = false;
   bool _syncingHorizontalScroll = false;
+  int _lastComputedHours = _kMinGuideHours;
   bool _isShowingDatePicker = false;
   bool _isOpeningRecordings = false;
   int? _lastFocusedRowIndex;
   final ValueNotifier<GuideProgram?> _focusedProgram = ValueNotifier(null);
   final ValueNotifier<GuideChannel?> _focusedChannel = ValueNotifier(null);
-  final ValueNotifier<bool> _channelRailFocused = ValueNotifier(false);
-
-  /// Debounces the hero's per-program artwork lookup (see
-  /// [LiveTvGuideViewModel.artworkSourceFor]) so scrolling through the
-  /// channel column doesn't fire a request per row passed through.
-  Timer? _artworkLookupDebounce;
-
-  /// Debounces re-submitting the bounded artwork prefetch window on scroll, so
-  /// a fling doesn't resubmit on every frame.
-  Timer? _artworkPrefetchScrollDebounce;
   bool _didInitializeMiniPlayerMode = false;
-  bool _didRestoreInitialChannelFocus = false;
-
   late EpgMobileView _mobileView;
-  // A placeholder for the one frame before the first layout measures the real
-  // surface, which then replaces it. The canvas every television lays out on
-  // is the closest guess there's going to be, and naming it keeps the
-  // placeholder honest if that canvas ever moves.
-  GuideLayoutProfile _layoutProfile = GuideLayoutProfile.fromAvailableArea(
-    availableWidth: kTvDesignWidth,
-    availableHeight: kTvDesignWidth * 9 / 16,
-  );
-  Duration? _pendingGuideWindow;
-
-  /// Whether the current layout actually renders the hero band, the only
-  /// widget that consumes per-program artwork.
-  bool _heroVisible = false;
-
-  /// The grid's selection model. Vertical navigation resolves against its
-  /// anchor time instead of focus geometry. Seeded on the first cell focus.
-  GuideSelection? _selection;
-
-  /// The single deferred vertical move, or null when nothing is pending.
-  _PendingVerticalMove? _pendingVerticalMove;
-
-  /// One-shot timer to the next half hour. Rescheduled when it fires.
-  Timer? _reanchorTimer;
-  Timer? _displayClockTimer;
-
-  /// When the last d-pad event arrived, or null before the first one.
-  DateTime? _lastDpadEventAt;
-
-  /// Mounted program rows by row index, so the screen can focus a cell in a
-  /// row whose focus nodes are private to that row's state.
-  final Map<int, _GuideProgramRowState> _rowStates = {};
-  List<String> _visibleChannelIds = const [];
-  final Set<String> _precachedGuideLogoUrls = <String>{};
+  String? _savedGuideView;
+  late final String _viewOwner;
+  late final String _viewServer;
 
   bool get _apple => AppUiIdiomResolver.isApple;
+  bool get _guideIsCurrent => mounted && (ModalRoute.of(context)?.isCurrent ?? true);
+  bool _channelActionsOpen = false;
 
-  // Standalone landscape guides can reclaim the route's top breathing room.
-  // Mobile and embedded guides keep their existing inset.
-  double _contentTopInset({bool landscape = false}) => guideContentTopInset(
-    landscape: landscape,
-    miniPlayerMode: widget.miniPlayerMode,
-  );
+  double _contentTopInset() => 20.0;
+
+  double _contentLeftInset() => 24.0;
 
   @override
   void initState() {
     super.initState();
+    if (PlatformDetection.isTV && const bool.fromEnvironment('SPESH_TV_TRANSFORM_TRACE')) {
+      _transformTrace = TvTransformTrace()..start();
+    }
+    final client = GetIt.instance<MediaServerClient>();
+    _viewOwner = client.userId ?? '';
+    _viewServer = client.baseUrl;
     _vm = LiveTvGuideViewModel(
-      GetIt.instance<MediaServerClient>(),
+      client,
       initialSortBy: _prefs.get(UserPreferences.liveTvChannelSortBy),
     );
+    if (const bool.fromEnvironment('SPESHTV_WEB')) {
+      _readRecentChannels();
+      _prefs.addListener(_readRecentChannels);
+      _savedGuideView = _prefs.get(speshGuidePreference(_viewServer, _viewOwner));
+      final saved = SpeshGuideView.decode(_savedGuideView!);
+      _vm.setChannelFilters(country: saved.country, package: saved.package, tag: saved.tag);
+      final filter = GuideFilter.values.where((value) => value.name == saved.filter).firstOrNull;
+      _vm.setFilter(filter ?? GuideFilter.all);
+    }
     _vm.addListener(_onChanged);
-    userDataSync.addListener(_vm.syncChannelUserData);
-    widget.backController?._onBackPressed = _consumeBackIfExploring;
-    WidgetsBinding.instance.addObserver(this);
     _mobileView = _prefs.get(UserPreferences.epgMobileView);
-    _focusedProgram.addListener(_scheduleArtworkLookup);
-    _focusedChannel.addListener(_scheduleArtworkLookup);
-    _channelRailFocused.addListener(_scheduleArtworkLookup);
+    if (speshWeb && widget.miniPlayerMode) {
+      _pickerNowNextTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
 
     _channelScrollController.addListener(_syncVerticalScroll);
     _programScrollController.addListener(_syncVerticalScroll);
-    _timeHeaderHorizontalScrollController.addListener(
-      _syncHorizontalFromHeader,
-    );
+    _timeHeaderHorizontalScrollController.addListener(_syncHorizontalFromHeader);
     _guideHorizontalScrollController.addListener(_syncHorizontalFromGuide);
-    _scheduleReanchor();
-    _displayClockTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (mounted) setState(() {});
-    });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final mediaQuery = MediaQuery.of(context);
-      final landscape = _isLandscapeSize(mediaQuery.size);
-      final area = guideAvailableArea(
-        maxWidth: mediaQuery.size.width,
-        maxHeight: mediaQuery.size.height,
-        landscape: landscape,
-        miniPlayerMode: widget.miniPlayerMode,
-      );
-      final profile = GuideLayoutProfile.fromAvailableArea(
-        availableWidth: area.width,
-        availableHeight: area.height,
-        textScaleFactor: mediaQuery.textScaler.scale(1),
-      );
-      _layoutProfile = profile;
-      unawaited(
-        _vm.load(
-          window: profile.guideWindow,
-          windowStart: guideLeftEdge(DateTime.now()),
-          livePosition: true,
-        ),
-      );
+      final width = MediaQuery.sizeOf(context).width - _contentLeftInset();
+      _vm.load(windowHours: _guideHoursForWidth(width),
+          windowStart: guideLeftEdge(DateTime.now()));
     });
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
-    final now = DateTime.now();
-    _scheduleReanchor();
-    unawaited(_resumeGuide(now));
-  }
-
-  Future<void> _resumeGuide(DateTime now) async {
-    await _vm.reloadIfStale(
-      window: _layoutProfile.guideWindow,
-      windowStart: guideLeftEdge(now),
-    );
-    if (!mounted) return;
-    _vm.scheduleBoundaryRefresh();
-    await _vm.refreshAtQuarterHour();
-  }
-
   void _syncVerticalScroll() {
-    _scheduleArtworkPrefetch();
     if (_syncingScroll) return;
-    if (!_channelScrollController.hasClients ||
-        !_programScrollController.hasClients) {
+    if (!_channelScrollController.hasClients || !_programScrollController.hasClients) {
       return;
     }
 
@@ -325,7 +223,8 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       if (target.hasClients) {
         target.jumpTo(source.offset);
       }
-    } catch (_) {}
+    } catch (_) {
+    }
     _syncingScroll = false;
   }
 
@@ -356,189 +255,40 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       if ((target.offset - targetOffset).abs() > 0.5) {
         target.jumpTo(targetOffset);
       }
-    } catch (_) {}
+    } catch (_) {
+    }
     _syncingHorizontalScroll = false;
   }
 
   void _onChanged() {
     if (!mounted) return;
-    if (_vm.state == GuideState.ready) _vm.scheduleBoundaryRefresh();
-    final channelIds = _vm.filteredChannels
-        .map((channel) => channel.id)
-        .toList();
-    _precacheGuideLogos(_vm.filteredChannels);
-    // The whole lineup is submitted on ordinary lineups; only large ones
-    // are bounded to the rows around the current viewport.
-    _queueArtworkPrefetch();
-    final lineupChanged = !listEquals(channelIds, _visibleChannelIds);
-    _visibleChannelIds = channelIds;
+    final restoreRow = _guideIsCurrent &&
+        _channelFocusNodes.values.any((node) => node.hasFocus);
+    if (const bool.fromEnvironment('SPESHTV_WEB') && _vm.state == GuideState.ready &&
+        !widget.miniPlayerMode && _viewOwner.isNotEmpty) {
+      final client = GetIt.instance<MediaServerClient>();
+      if (client.userId == _viewOwner && client.baseUrl == _viewServer) {
+        final saved = SpeshGuideView(country: _vm.country, package: _vm.package,
+            tag: _vm.tag, filter: _vm.filter.name).encode();
+        if (saved != _savedGuideView) {
+          _savedGuideView = saved;
+          unawaited(_prefs.set(speshGuidePreference(_viewServer, _viewOwner), saved));
+        }
+      }
+    }
     setState(_initializeMiniPlayerMode);
-    if (lineupChanged) {
-      _refreshFocusedChannelAfterLineupChange();
+    if (restoreRow) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _rebindSelectionAfterLineupChange();
+        if (_guideIsCurrent) _focusRowFromMiniPlayer();
       });
     }
-    _scheduleInitialChannelFocus();
-    if (_pendingVerticalMove == null) return;
-    // The target row can only be focused once the notification's rebuild has
-    // mounted it, so resolve the intent after this frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _applyPendingVerticalMove();
-    });
   }
 
-  void _precacheGuideLogos(Iterable<GuideChannel> channels) {
-    if (!mounted) return;
-    if (_precachedGuideLogoUrls.length > 512) {
-      _precachedGuideLogoUrls.clear();
-    }
-    for (final channel in channels.take(_kGuideLogoPrecacheRows)) {
-      final tag = channel.imageTag;
-      if (tag == null) continue;
-      final url = _vm.imageApi.getPrimaryImageUrl(
-        channel.id,
-        maxHeight: _layoutProfile.rowHeight.toInt(),
-        tag: tag,
-      );
-      if (url.isEmpty || !_precachedGuideLogoUrls.add(url)) continue;
-      unawaited(
-        BoundedNetworkImage.precache(
-          context,
-          url,
-          layoutWidth: 34,
-          maxWidth: 128,
-        ).catchError((_) {
-          _precachedGuideLogoUrls.remove(url);
-        }),
-      );
-    }
-  }
-
-  void _scheduleArtworkPrefetch() {
-    _artworkPrefetchScrollDebounce?.cancel();
-    if (!_heroVisible) return;
-    _artworkPrefetchScrollDebounce = Timer(
-      const Duration(milliseconds: 250),
-      () {
-        if (mounted) _queueArtworkPrefetch();
-      },
-    );
-  }
-
-  /// Submits artwork prefetch for the channel rows near the current viewport,
-  /// plus [_kArtworkPrefetchRowMargin] rows of slack above and below. Falls
-  /// back to the first screenful of channels before the scroll controller has
-  /// attached. Every submission replaces the pending queue, so a filter change
-  /// can't leave requests for channels that are no longer shown ahead of the
-  /// new work.
-  ///
-  /// The bound applies to every lineup, not just large ones. Submitting a
-  /// whole lineup queued a request per program, which is the same load issue
-  /// #666 was about spread across many small requests, and a submission
-  /// bigger than the view model's artwork cache made each pass evict entries
-  /// the next pass then re-fetched. Since [_onChanged] resubmits on every
-  /// notification and each resolved fetch notifies, that fed itself. A
-  /// viewport-sized submission stays well under the cache cap, so once its
-  /// rows resolve a resubmission does nothing.
-  void _queueArtworkPrefetch() {
-    // The hero band is the only consumer of per-program artwork.
-    if (!_heroVisible) return;
-    final channels = _vm.filteredChannels;
-    if (channels.isEmpty) {
-      // A filter matching nothing must still drop work queued for the
-      // lineup it replaced.
-      _vm.queueArtworkPrefetch(const [], replace: true);
-      return;
-    }
-
-    final rowHeight = _layoutProfile.rowHeight;
-
-    var firstRow = 0;
-    var visibleCount = _kGuideLogoPrecacheRows;
-    if (_channelScrollController.hasClients) {
-      final offset = _channelScrollController.offset;
-      final viewport = _channelScrollController.position.viewportDimension;
-      firstRow = (offset / rowHeight).floor();
-      visibleCount = (viewport / rowHeight).ceil();
-    }
-
-    final start = (firstRow - _kArtworkPrefetchRowMargin).clamp(
-      0,
-      channels.length,
-    );
-    final end = (firstRow + visibleCount + _kArtworkPrefetchRowMargin).clamp(
-      0,
-      channels.length,
-    );
-    if (start >= end) return;
-
-    _vm.queueArtworkPrefetch([
-      for (final channel in channels.sublist(start, end))
-        ..._vm.programsForChannel(channel.id),
-    ], replace: true);
-  }
-
-  /// True unless focus is sitting on one of this screen's non-grid controls.
-  /// A genre filter switch changes the lineup and would otherwise yank focus
-  /// back into the grid while the user is still on a filter chip or the
-  /// window bar.
-  bool get _gridHasFocus {
-    final focus = FocusManager.instance.primaryFocus;
-    if (focus == null) return false;
-    return !_filterFocusNodes.containsValue(focus) &&
-        !_windowBarFocusNodes.containsValue(focus) &&
-        focus != _miniPlayerFocusNode;
-  }
-
-  /// A channel row's FocusNode is cached by row index, so a filter that swaps
-  /// which channel sits in a focused row fires no focus change and leaves the
-  /// tracked channel naming the old one. Re-derive it from whichever row's
-  /// node actually holds focus; this only updates tracked state, never real
-  /// focus, so it stays safe to call while the guide is covered.
-  void _refreshFocusedChannelAfterLineupChange() {
-    final channels = _vm.filteredChannels;
-    for (final entry in _channelFocusNodes.entries) {
-      if (!entry.value.hasFocus) continue;
-      final index = entry.key;
-      if (index >= channels.length) return;
-      final channel = channels[index];
-      if (_focusedChannel.value?.id == channel.id) return;
-      _channelRailFocused.value = true;
-      _focusedProgram.value = null;
-      _focusedChannel.value = channel;
-      return;
-    }
-  }
-
-  void _rebindSelectionAfterLineupChange() {
-    final selection = _selection;
-    final channels = _vm.filteredChannels;
-    if (selection == null || channels.isEmpty) return;
-
-    var rowIndex = channels.indexWhere(
-      (channel) => channel.id == selection.channelId,
-    );
-    if (rowIndex < 0) {
-      rowIndex = (_lastFocusedRowIndex ?? 0).clamp(0, channels.length - 1);
-      final channelId = channels[rowIndex].id;
-      final cells = _cellsForChannel(channelId);
-      if (cells.isEmpty) return;
-      final cell = cells[resolveCellIndexAt(cells, selection.anchorTime)];
-      _selection = GuideSelection(
-        channelId: channelId,
-        anchorTime: clampAnchorInto(cell, selection.anchorTime),
-        programId: cell.program?.id,
-      );
-    }
-    final rebound = _selection!;
-    final cells = _cellsForChannel(rebound.channelId);
-    if (cells.isEmpty) return;
-    _scrollToRow(rowIndex);
-    // Keep the selection and scroll position correct either way, so the
-    // grid is ready if the user comes back to it — just don't steal focus
-    // away from wherever they actually are (a filter chip, the window bar).
-    if (_gridHasFocus) _focusSelectedCell(rebound, cells);
+  void _readRecentChannels() {
+    final client = GetIt.instance<MediaServerClient>();
+    if (client.userId != _viewOwner || client.baseUrl != _viewServer) return;
+    _vm.setRecentChannels(decodeRecentChannels(
+        _prefs.get(speshRecentChannelsPreference(_viewServer, _viewOwner))));
   }
 
   void _initializeMiniPlayerMode() {
@@ -569,43 +319,12 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _focusChannelRow(initialIndex, animate: false);
+      _focusChannelRow(initialIndex);
     });
   }
 
-  void _scheduleInitialChannelFocus() {
-    if (widget.miniPlayerMode ||
-        _didRestoreInitialChannelFocus ||
-        _vm.state != GuideState.ready ||
-        _vm.filteredChannels.isEmpty) {
-      return;
-    }
-
-    final preferredId = _prefs.get(UserPreferences.liveTvLastChannelId).trim();
-    final preferredIndex = _vm.filteredChannels.indexWhere(
-      (channel) => channel.id == preferredId,
-    );
-    final index = preferredIndex >= 0 ? preferredIndex : 0;
-    _didRestoreInitialChannelFocus = true;
-
-    // RequestInitialFocus also schedules a post-frame focus. Defer one extra
-    // frame so the restored row wins that initial traversal race.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _focusChannelRow(index, animate: false);
-      });
-    });
-  }
-
-  /// [animate] is false for jumps that reposition the whole grid to a
-  /// channel that may be nowhere near the current viewport -- entering the
-  /// guide, or the back-to-entry reset -- where animating the tween across a
-  /// long lineup is pure wasted paint on slower hardware. Ordinary vertical
-  /// navigation keeps the animated version so a one-row move still reads as
-  /// a scroll.
-  void _scrollToRow(int index, {bool animate = true}) {
-    final offset = index * _layoutProfile.rowHeight;
+  void _scrollToRow(int index) {
+    final offset = index * _kRowHeight;
     final targetRow = index;
     if (_lastFocusedRowIndex == targetRow) {
       return;
@@ -613,29 +332,19 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     _lastFocusedRowIndex = targetRow;
     if (_channelScrollController.hasClients) {
       final max = _channelScrollController.position.maxScrollExtent;
-      final clamped = offset.clamp(0.0, max);
-      if (animate) {
-        _channelScrollController.animateTo(
-          clamped,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      } else {
-        _channelScrollController.jumpTo(clamped);
-      }
+      _channelScrollController.animateTo(
+        offset.clamp(0.0, max),
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
     }
     if (_programScrollController.hasClients) {
       final max = _programScrollController.position.maxScrollExtent;
-      final clamped = offset.clamp(0.0, max);
-      if (animate) {
-        _programScrollController.animateTo(
-          clamped,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
-      } else {
-        _programScrollController.jumpTo(clamped);
-      }
+      _programScrollController.animateTo(
+        offset.clamp(0.0, max),
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
     }
   }
 
@@ -646,98 +355,38 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     );
   }
 
-  /// Whether focus is this screen's to take right now.
-  ///
-  /// Several of these requests are deferred to a post-frame callback, and a
-  /// route pushed on top of the guide does NOT unmount it -- the guide stays
-  /// alive underneath. So `mounted` alone is not enough: a callback landing
-  /// after the viewer opened a channel would pull focus out of the player and
-  /// back onto a row nobody can see, leaving the remote apparently dead
-  /// because every key goes to the hidden screen. Measured on a Shield with
-  /// primaryFocus stranded on `GuideFilter:0` while the player was on top.
-  ///
-  /// A null route means the guide is embedded rather than pushed, and then
-  /// nothing is on top of it to protect.
-  bool get _mayTakeFocus {
-    if (!mounted) return false;
-    final route = ModalRoute.of(context);
-    return route == null || route.isCurrent;
-  }
-
-  void _focusChannelRow(int index, {bool animate = true}) {
-    if (!_mayTakeFocus) return;
-    _cancelPendingVerticalMove();
-    _scrollToRow(index, animate: animate);
+  void _focusChannelRow(int index) {
+    if (!_guideIsCurrent) return;
+    _scrollToRow(index);
     _channelFocusNodeFor(index).requestFocus();
   }
 
   void _focusMiniPlayer() {
-    if (!widget.miniPlayerMode || !_mayTakeFocus) return;
-    _cancelPendingVerticalMove();
+    if (!widget.miniPlayerMode || !_guideIsCurrent) return;
     _miniPlayerFocusNode.requestFocus();
   }
 
-  /// Back's stop above the grid: the filter rail, or the mini player in the
-  /// player's guide, which has no rail. False when focus can't move there.
-  bool _focusGuideHeader() {
-    if (!_mayTakeFocus) return false;
-    if (widget.miniPlayerMode) {
-      _focusMiniPlayer();
-    } else {
-      _focusFilterRail();
-    }
-    return true;
-  }
-
-  void _focusFilterRail() {
-    if (!_mayTakeFocus) return;
-    _cancelPendingVerticalMove();
-    _filterFocusNodeFor(0).requestFocus();
-  }
-
-  /// Moves within the controls row, refusing a move off either end.
-  void _focusWindowBar(int index) {
-    if (index < _kWindowBarPrevious || index > _kWindowBarLast) return;
-    if (!_mayTakeFocus) return;
-    _cancelPendingVerticalMove();
-    _lastWindowBarIndex = index;
-    _windowBarFocusNodeFor(index).requestFocus();
-  }
-
-  /// UP out of the grid or channel column. The mini-player surface has no
-  /// controls row, so it keeps going straight to the player.
-  void _focusWindowBarFromGrid() {
-    if (widget.miniPlayerMode) {
-      _focusMiniPlayer();
-      return;
-    }
-    _focusWindowBar(_lastWindowBarIndex);
-  }
-
-  /// DOWN out of the genre rail lands on the same button UP left behind.
-  void _focusWindowBarFromGenres() => _focusWindowBar(_lastWindowBarIndex);
-
-  void _focusLastChannelRow() {
+  void _focusRowFromMiniPlayer() {
     final channels = _vm.filteredChannels;
     if (channels.isEmpty) return;
 
-    var targetIndex = _lastFocusedRowIndex ?? 0;
-    final focusedChannelId = _focusedChannel.value?.id;
-    if (focusedChannelId != null) {
-      final channelIndex = channels.indexWhere(
-        (channel) => channel.id == focusedChannelId,
-      );
-      if (channelIndex >= 0) {
-        targetIndex = channelIndex;
+    final targetIndex = restoredGuideRow(channels.map((c) => c.id).toList(),
+        _focusedChannel.value?.id, _lastFocusedRowIndex ?? 0);
+    for (final controller in [_channelScrollController, _programScrollController]) {
+      if (controller.hasClients) {
+        controller.jumpTo((targetIndex * _kRowHeight).clamp(0.0, controller.position.maxScrollExtent));
       }
     }
-
-    _focusChannelRow(targetIndex.clamp(0, channels.length - 1));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_guideIsCurrent) _focusChannelRow(targetIndex);
+    });
+    // Returning from fixed controls may not change layout or scroll offsets.
+    // Post-frame work alone does not request a frame in that idle case.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   Future<void> _openDatePicker() async {
     if (_isShowingDatePicker) return;
-    _cancelPendingVerticalMove();
     _isShowingDatePicker = true;
     try {
       final picked = await showDatePicker(
@@ -753,8 +402,7 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
         },
       );
       if (picked != null) {
-        await _vm.setDate(picked);
-        if (mounted) _anchorToWindowStart();
+        _vm.setDate(picked);
       }
     } finally {
       _isShowingDatePicker = false;
@@ -762,50 +410,35 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
   }
 
   void _openSortDialog() {
-    _cancelPendingVerticalMove();
     final l10n = AppLocalizations.of(context);
     showFocusRestoringDialog(
       context: context,
       builder: (dialogContext) => AlertDialog.adaptive(
         backgroundColor: AppColorScheme.surface,
-        title: Text(l10n.sortBy, style: const TextStyle(color: Colors.white)),
+        title: Text(
+          l10n.sortBy,
+          style: const TextStyle(color: Colors.white),
+        ),
         content: RadioGroup<ChannelSortBy>(
           groupValue: _vm.sortBy,
           onChanged: (value) {
             if (value == null) return;
             _prefs.set(UserPreferences.liveTvChannelSortBy, value);
-            _cancelPendingVerticalMove();
             _vm.setSortBy(value);
             Navigator.of(dialogContext).pop();
           },
-          // RadioGroup binds the arrow keys to "select the adjacent radio", so
-          // on a d-pad the first move commits a sort and closes the dialog.
-          // Restore plain directional focus. Centre-press still picks.
-          child: Shortcuts(
-            shortcuts: const <ShortcutActivator, Intent>{
-              SingleActivator(LogicalKeyboardKey.arrowUp):
-                  DirectionalFocusIntent(TraversalDirection.up),
-              SingleActivator(LogicalKeyboardKey.arrowDown):
-                  DirectionalFocusIntent(TraversalDirection.down),
-              SingleActivator(LogicalKeyboardKey.arrowLeft):
-                  DirectionalFocusIntent(TraversalDirection.left),
-              SingleActivator(LogicalKeyboardKey.arrowRight):
-                  DirectionalFocusIntent(TraversalDirection.right),
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final option in ChannelSortBy.values)
-                  RadioListTile<ChannelSortBy>(
-                    value: option,
-                    autofocus: option == _vm.sortBy,
-                    title: Text(
-                      option.displayName,
-                      style: const TextStyle(color: Colors.white),
-                    ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final option in ChannelSortBy.values)
+                RadioListTile<ChannelSortBy>(
+                  value: option,
+                  title: Text(
+                    option.displayName,
+                    style: const TextStyle(color: Colors.white),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
         ),
       ),
@@ -814,35 +447,31 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
 
   Future<void> _openRecordings() async {
     if (_isOpeningRecordings) return;
-    _cancelPendingVerticalMove();
     _isOpeningRecordings = true;
     try {
-      if (widget.onOpenRecordings case final open?) {
-        await open();
-      } else {
-        await context.push(Destinations.liveTvRecordings);
-      }
+      await context.push(Destinations.liveTvRecordings);
     } finally {
       _isOpeningRecordings = false;
     }
-    if (mounted) await _vm.reloadIfRecordingsChanged();
   }
 
   @override
   void dispose() {
-    userDataSync.removeListener(_vm.syncChannelUserData);
-    widget.backController?._onBackPressed = null;
-    _reanchorTimer?.cancel();
-    _displayClockTimer?.cancel();
-    _artworkLookupDebounce?.cancel();
-    _artworkPrefetchScrollDebounce?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
-    _vm.cancelBoundaryRefresh();
+    _topControlScope.dispose();
+    _typeControlScope.dispose();
+    _heroControlScope.dispose();
+    _searchControlScope.dispose();
+    _facetControlScope.dispose();
+    _transformTrace?.dispose();
+    _pickerNowNextTimer?.cancel();
+    _prefs.removeListener(_readRecentChannels);
+    _searchDebounce?.cancel();
+    _programPrefetch?.cancel();
+    _searchController.dispose();
+    _numberController.dispose();
+    _nowNextScrollController.dispose();
     _vm.removeListener(_onChanged);
     _vm.dispose();
-    _focusedProgram.removeListener(_scheduleArtworkLookup);
-    _focusedChannel.removeListener(_scheduleArtworkLookup);
-    _channelRailFocused.removeListener(_scheduleArtworkLookup);
     _channelScrollController.dispose();
     _programScrollController.dispose();
     _timeHeaderHorizontalScrollController.dispose();
@@ -856,13 +485,8 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       node.dispose();
     }
     _filterFocusNodes.clear();
-    for (final node in _windowBarFocusNodes.values) {
-      node.dispose();
-    }
-    _windowBarFocusNodes.clear();
     _focusedProgram.dispose();
     _focusedChannel.dispose();
-    _channelRailFocused.dispose();
     super.dispose();
   }
 
@@ -908,87 +532,163 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
 
   double _totalGuideWidth() {
     final minutes = _vm.windowEnd.difference(_vm.windowStart).inMinutes;
-    return minutes * _layoutProfile.pixelsPerMinute;
+    return minutes * _kPixelsPerMinute;
   }
 
   // Called from row itemBuilders: as the guide scrolls toward the lazily-loaded
   // edge, request the next batch of programs (the VM guards against re-entry).
   void _maybeLoadMore(int index) {
+    if (speshWeb) {
+      final channels = _vm.filteredChannels;
+      _pendingProgramIds.addAll(channels.skip(index).take(_kProgramPrefetchRows)
+        .where((channel) => !_vm.hasProgramsFor(channel.id)).map((channel) => channel.id));
+      if (_pendingProgramIds.isNotEmpty && !_prefetching && _programPrefetch == null) {
+        _programPrefetch = Timer(const Duration(milliseconds: 80), _fetchVisiblePrograms);
+      }
+      return;
+    }
     if (_vm.hasMorePrograms &&
         index + _kProgramPrefetchRows >= _vm.programsHighWater) {
       _vm.loadMorePrograms();
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final content = Focus(
-      canRequestFocus: false,
-      onKeyEvent: (_, event) {
-        if (!event.logicalKey.isRecordingsKey) {
-          return KeyEventResult.ignored;
-        }
-        if (event is KeyDownEvent) unawaited(_openRecordings());
-        return KeyEventResult.handled;
-      },
-      child: RequestInitialFocus(child: _buildContent(context)),
-    );
-    // The embedded overlay shares its host's single route and its PopScope;
-    // the host asks widget.backController instead. The standalone route owns
-    // its own pop attempts, so it needs its own PopScope here.
-    if (widget.embedded) return content;
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (_consumeBackIfExploring()) return;
-        Navigator.of(context).pop();
-      },
-      child: content,
+  // A faint skeleton bar shown in a program row whose channel hasn't been
+  // fetched yet. Channel logos still render; they load with the channel list.
+  Widget _buildProgramPlaceholderRow() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 24),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Color(0x0FFFFFFF),
+          borderRadius: BorderRadius.all(Radius.circular(6)),
+        ),
+        child: SizedBox.expand(),
+      ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) =>
+      PopScope(
+        canPop: !speshWeb || widget.embedded || widget.miniPlayerMode,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && speshWeb && !widget.embedded && !widget.miniPlayerMode) {
+            handleSpeshGuideBack(
+              keyboardVisible: MediaQuery.viewInsetsOf(context).bottom > 0,
+              dismissKeyboard: () {
+                FocusManager.instance.primaryFocus?.unfocus();
+                SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+              }, returnHome: _returnHome);
+          }
+        },
+        child: RequestInitialFocus(child: _buildContent(context)),
+      );
+
+  void _returnHome() {
+    if (widget.onReturnHome != null) {
+      widget.onReturnHome!();
+    } else if (speshWeb && !widget.miniPlayerMode) {
+      context.go(Destinations.home);
+    } else if (widget.embedded) {
+      widget.onClose?.call();
+    } else {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _fetchVisiblePrograms() async {
+    _programPrefetch = null;
+    if (!mounted || _prefetching) return;
+    final ids = _pendingProgramIds.toList();
+    _pendingProgramIds.clear();
+    _prefetching = true;
+    try {
+      await _vm.ensureProgramsForChannels(ids);
+    } catch (_) {
+      // A later scroll retries guide data without interrupting the live stream.
+    } finally {
+      _prefetching = false;
+      if (mounted && _pendingProgramIds.isNotEmpty) {
+        _programPrefetch = Timer(const Duration(milliseconds: 80), _fetchVisiblePrograms);
+      }
+    }
+  }
+
+  void _searchChannels(String query) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 240), () {
+      if (!mounted) return;
+      _vm.setChannelQuery(query);
+    });
+  }
+
+  void _jumpToChannel() {
+    final channel = _vm.channelForNumber(_numberController.text);
+    if (channel == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Channel number not found.')));
+      return;
+    }
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    _vm.setChannelQuery('');
+    _vm.setFilter(GuideFilter.all);
+    _vm.clearChannelFilters();
+    // The fixed-height grid supports an exact jump even before distant rows build.
+    setState(() => _mobileView = EpgMobileView.grid);
+    _lastFocusedRowIndex = null;
+    _focusedChannel.value = channel;
+    _focusedProgram.value = _currentProgramForChannel(channel.id);
+    unawaited(_vm.ensureProgramsForChannels([channel.id]).catchError((Object _) {}));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final index = _vm.filteredChannels.indexWhere((c) => c.id == channel.id);
+      if (index >= 0) _focusChannelRow(index);
+    });
+  }
+
+  Widget _buildSpeshControls() => SpeshGuideControls(
+    searchController: _searchController, numberController: _numberController,
+    onSearch: _searchChannels, onJump: _jumpToChannel, onHome: _returnHome,
+    onStop: widget.onStopPreview,
+    onPreview: _vm.filteredChannels.isEmpty ? null : () {
+      final selected = _focusedChannel.value;
+      final visible = _vm.filteredChannels;
+      final id = visible.any((channel) => channel.id == selected?.id)
+          ? selected!.id : visible.first.id;
+      _watchChannel(id, preview: true);
+    },
+  );
+
+  Widget _buildChannelFilters() => SpeshChannelFilters(model: _vm,
+    onClearRecent: () {
+      final client = GetIt.instance<MediaServerClient>();
+      if (client.userId != _viewOwner || client.baseUrl != _viewServer) return;
+      unawaited(_prefs.set(speshRecentChannelsPreference(_viewServer, _viewOwner), '[]'));
+    }, onChanged: () {
+    // Restore by channel identity when the viewer returns from controls.
+  });
 
   Widget _buildContent(BuildContext context) {
     final body = LayoutBuilder(
       builder: (context, constraints) {
-        final landscape = _isLandscapeConstraints(constraints);
-        final topInset = _contentTopInset(landscape: landscape);
-        final area = guideAvailableArea(
-          maxWidth: constraints.maxWidth,
-          maxHeight: constraints.maxHeight,
-          landscape: landscape,
-          miniPlayerMode: widget.miniPlayerMode,
+        final hours = _guideHoursForWidth(
+          constraints.maxWidth - _contentLeftInset(),
         );
-        final profile = GuideLayoutProfile.fromAvailableArea(
-          availableWidth: area.width,
-          availableHeight: area.height,
-          textScaleFactor: MediaQuery.textScalerOf(context).scale(1),
-        );
-        _layoutProfile = profile;
-        final heroVisible = landscape && !widget.miniPlayerMode;
-        if (heroVisible != _heroVisible) {
-          _heroVisible = heroVisible;
-          // Deferred because this runs during build: gaining the hero has
-          // to start artwork work that nothing else will trigger until the
-          // next notification, and losing it has to drop work already
-          // queued for a band that is no longer on screen.
+        if (hours != _lastComputedHours && _vm.state == GuideState.ready) {
+          _lastComputedHours = hours;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            if (_heroVisible) {
-              _queueArtworkPrefetch();
-              _scheduleArtworkLookup();
-            } else {
-              _artworkPrefetchScrollDebounce?.cancel();
-              _artworkLookupDebounce?.cancel();
-              _vm.queueArtworkPrefetch(const [], replace: true);
-            }
+            if (mounted) _vm.setWindowHours(hours);
           });
         }
-        if (landscape) _scheduleGuideWindowUpdate(profile.guideWindow);
+        final landscape = widget.miniPlayerMode ||
+            PlatformDetection.isTV ||
+            PlatformDetection.useDesktopUi ||
+            constraints.maxWidth >= constraints.maxHeight;
         return Padding(
           padding: EdgeInsets.only(
-            top: topInset,
-            left: landscape ? guideContentLeftInset : 8,
+            top: _contentTopInset(),
+            left: landscape ? _contentLeftInset() : 8,
             right: landscape ? 24 : 8,
             bottom: 16,
           ),
@@ -1013,55 +713,72 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     );
   }
 
-  bool _isLandscapeSize(Size size) =>
-      widget.miniPlayerMode ||
-      PlatformDetection.isTV ||
-      PlatformDetection.useDesktopUi ||
-      size.width >= size.height;
-
-  bool _isLandscapeConstraints(BoxConstraints constraints) =>
-      widget.miniPlayerMode ||
-      PlatformDetection.isTV ||
-      PlatformDetection.useDesktopUi ||
-      constraints.maxWidth >= constraints.maxHeight;
-
-  void _scheduleGuideWindowUpdate(Duration window) {
-    if (_vm.state != GuideState.ready ||
-        window == _vm.guideWindow ||
-        window == _pendingGuideWindow) {
-      return;
-    }
-    _pendingGuideWindow = window;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _pendingGuideWindow != window) return;
-      try {
-        await _vm.setWindow(window);
-      } finally {
-        if (mounted && _pendingGuideWindow == window) {
-          _pendingGuideWindow = null;
-        }
-      }
-    });
-  }
-
   Widget _buildLandscape() {
     return Column(
       children: [
-        _buildTopSection(),
-        SizedBox(height: widget.miniPlayerMode ? 8 : 2),
-        // The window control sits directly above the grid. The tick strip's
-        // left region is only channel-column wide and 22-24 px tall, so it
-        // can't hold the chevrons and the range text at the narrowest size.
-        if (!widget.miniPlayerMode) _buildGuideWindowBar(),
+        _buildLandscapeHeader(),
+        const SizedBox(height: 8),
         Expanded(child: _buildBody()),
       ],
     );
+  }
+
+  void _focusGuideControls() {
+    if (!_guideIsCurrent) return;
+    if (PlatformDetection.isTV && speshWeb) {
+      focusSpeshGuideScope(_lastControlScope ?? _facetControlScope);
+    } else {
+      _filterFocusNodeFor(0).requestFocus();
+    }
+  }
+
+  Widget _buildLandscapeHeader() {
+    if (PlatformDetection.isTV && speshWeb) {
+      Widget band(FocusScopeNode scope, Widget child, {VoidCallback? up, VoidCallback? down}) =>
+        SpeshGuideFocusBand(scope: scope, child: child, onUp: up, onDown: down,
+          onEntered: () => _lastControlScope = scope);
+      return SpeshGuideControlFocus(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (widget.miniPlayerMode)
+          band(_topControlScope, _buildTopSection(), down: () => focusSpeshGuideScope(_searchControlScope))
+        else ...[
+          band(_topControlScope, _buildToolbar(),
+            down: () => focusSpeshGuideScope(_typeControlScope)),
+          band(_typeControlScope, _buildFilterRail(),
+            up: () => focusSpeshGuideScope(_topControlScope),
+            down: () => focusSpeshGuideScope(_heroControlScope, fallback: _searchControlScope)),
+          const SizedBox(height: 8),
+          band(_heroControlScope, _buildHero(),
+            up: () => focusSpeshGuideScope(_typeControlScope),
+            down: () => focusSpeshGuideScope(_searchControlScope)),
+        ],
+        if (widget.miniPlayerMode && MediaQuery.sizeOf(context).width < 720) _buildPickerNowNext(),
+        band(_searchControlScope, _buildSpeshControls(),
+          up: () => focusSpeshGuideScope(widget.miniPlayerMode ? _topControlScope : _heroControlScope,
+            fallback: _typeControlScope),
+          down: () => focusSpeshGuideScope(_facetControlScope)),
+        band(_facetControlScope, _buildChannelFilters(),
+          up: () => focusSpeshGuideScope(_searchControlScope), down: () {
+            if (_vm.filteredChannels.isNotEmpty) {
+              _focusRowFromMiniPlayer();
+            }
+          }),
+      ]));
+    }
+    final header = Column(children: [
+      _buildTopSection(),
+      if (speshWeb && widget.miniPlayerMode && MediaQuery.sizeOf(context).width < 720) _buildPickerNowNext(),
+      if (speshWeb) _buildSpeshControls(),
+      if (speshWeb) _buildChannelFilters(),
+    ]);
+    return PlatformDetection.isTV ? SpeshGuideControlFocus(child: header) : header;
   }
 
   Widget _buildMobile() {
     return Column(
       children: [
         _buildMobileHeader(),
+        if (speshWeb) _buildSpeshControls(),
+        if (speshWeb) _buildChannelFilters(),
         _buildFilterRail(),
         const SizedBox(height: 8),
         Expanded(child: _buildMobileBody()),
@@ -1072,25 +789,14 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
   Widget _buildTopSection() {
     if (widget.miniPlayerMode) {
       return ListenableBuilder(
-        listenable: Listenable.merge([
-          _focusedProgram,
-          _focusedChannel,
-          _channelRailFocused,
-        ]),
+        listenable: Listenable.merge([_focusedProgram, _focusedChannel]),
         builder: (context, _) {
           final focusedProgram = _focusedProgram.value;
-          final focusedChannel =
-              !_channelRailFocused.value && focusedProgram != null
-              ? _vm.channelForId(focusedProgram.channelId)
-              : (_focusedChannel.value ?? widget.currentChannel);
-          // On the channel column, what that channel is airing, as the full
-          // guide's hero shows.
+          final focusedChannel = focusedProgram == null
+              ? (_focusedChannel.value ?? widget.currentChannel)
+              : _vm.channelForId(focusedProgram.channelId);
           return _buildProgramInfoHeader(
-            program:
-                focusedProgram ??
-                (focusedChannel == null
-                    ? null
-                    : _vm.nowNextForChannel(focusedChannel.id).now),
+            program: focusedProgram,
             channel: focusedChannel,
           );
         },
@@ -1099,179 +805,86 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [_buildToolbar(), const SizedBox(height: 2), _buildHero()],
+      children: [
+        _buildToolbar(),
+        _buildFilterRail(),
+        const SizedBox(height: 8),
+        _buildHero(),
+      ],
     );
   }
 
-  /// The program the hero (and its artwork lookup) is currently previewing:
-  /// the focused program cell, or — when focus is on the channel column
-  /// instead — whatever that channel is airing now.
-  GuideProgram? _currentPreviewProgram() {
-    final program = _focusedProgram.value;
-    final channel = !_channelRailFocused.value && program != null
-        ? _vm.channelForId(program.channelId)
-        : _focusedChannel.value;
-    return program ??
-        (channel == null ? null : _vm.nowNextForChannel(channel.id).now);
-  }
-
-  /// The bulk guide fetch disables images to keep its payload small (issue
-  /// #666), so it never carries a program's own `ImageTags` even when the
-  /// server has one on file. This debounces a per-program re-fetch (see
-  /// [LiveTvGuideViewModel.artworkSourceFor]) so scrolling through the
-  /// channel column doesn't fire a request per row passed through, and skips
-  /// it entirely once cached. Not limited to currently-airing programs —
-  /// future programs carry artwork just as often as live ones.
-  void _scheduleArtworkLookup() {
-    _artworkLookupDebounce?.cancel();
-    if (!_heroVisible) return;
-    final preview = _currentPreviewProgram();
-    if (preview == null ||
-        preview.artworkSource != null ||
-        _vm.hasArtworkResult(preview.id)) {
-      return;
-    }
-    final programId = preview.id;
-    _artworkLookupDebounce = Timer(const Duration(milliseconds: 500), () async {
-      // Nothing came back, so the hero has nothing new to paint. Rebuilding
-      // the whole guide anyway would cost a frame per focus move on any
-      // server whose programs carry no artwork.
-      if (await _vm.artworkSourceFor(preview) == null) return;
-      if (mounted && _currentPreviewProgram()?.id == programId) {
-        setState(() {});
-      }
-    });
-  }
+  Widget _buildPickerNowNext({bool showChannel = true}) => ListenableBuilder(
+    listenable: Listenable.merge([_vm, _focusedChannel]),
+    builder: (context, _) {
+      final channel = _focusedChannel.value ?? widget.currentChannel;
+      if (channel == null) return const SizedBox.shrink();
+      final programmes = _vm.nowNextForChannel(channel.id, ignoreGenreFilter: true);
+      final now = programmes.now;
+      final next = programmes.next;
+      return SpeshPickerNowNext(
+        channel: channel.number == null ? channel.name : '${channel.number} / ${channel.name}',
+        loading: !_vm.hasProgramsFor(channel.id),
+        showChannel: showChannel,
+        nowTitle: hasGuideTitle(now?.name) ? now!.name : null,
+        nowTime: now == null ? null : '${_formatTime(now.startDate)} - ${_formatTime(now.endDate)}',
+        nextTitle: hasGuideTitle(next?.name) ? next!.name : null,
+        nextTime: next == null ? null : '${_formatTime(next.startDate)} - ${_formatTime(next.endDate)}',
+      );
+    },
+  );
 
   Widget _buildHero() {
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        _focusedProgram,
-        _focusedChannel,
-        _channelRailFocused,
-      ]),
+      listenable: Listenable.merge([_focusedProgram, _focusedChannel]),
       builder: (context, _) {
         final program = _focusedProgram.value;
-        final channel = !_channelRailFocused.value && program != null
-            ? _vm.channelForId(program.channelId)
-            : _focusedChannel.value;
-        final preview = _currentPreviewProgram();
-        final now = DateTime.now();
-        final isLive =
-            preview != null &&
-            now.isAfter(preview.startDate) &&
-            now.isBefore(preview.endDate);
-        final channelWithLogo = channel;
-        final channelLogoUrl =
-            channelWithLogo != null && channelWithLogo.imageTag != null
-            ? _vm.imageApi.getPrimaryImageUrl(
-                channelWithLogo.id,
-                maxHeight: EpgHeroPreview.compactHeight.toInt(),
-                tag: channelWithLogo.imageTag,
-              )
-            : null;
-        final artwork = preview == null
+        final channel = program == null
+            ? _focusedChannel.value
+            : _vm.channelForId(program.channelId);
+        final logoUrl = channel?.imageTag == null
             ? null
-            : preview.artworkSource ?? _vm.cachedArtworkFor(preview.id);
-        // A thumb tag names the parent's Thumb image, so asking for its
-        // Primary with that tag serves the wrong image or nothing at all.
-        final programImageUrl = artwork == null
-            ? null
-            : artwork.isThumb
-            ? _vm.imageApi.getThumbImageUrl(
-                artwork.itemId,
-                maxWidth: EpgHeroPreview.plateWidth.toInt(),
-                tag: artwork.tag,
-              )
             : _vm.imageApi.getPrimaryImageUrl(
-                artwork.itemId,
-                maxHeight: EpgHeroPreview.compactHeight.toInt(),
-                maxWidth: EpgHeroPreview.plateWidth.toInt(),
-                tag: artwork.tag,
+                channel!.id,
+                maxHeight: 96,
+                tag: channel.imageTag,
               );
-        for (final url in [channelLogoUrl, programImageUrl]) {
-          if (url != null) {
-            _precacheGuideLogoUrl(url, layoutWidth: EpgHeroPreview.plateWidth);
-          }
-        }
-        final episodeTitle = preview?.episodeTitle;
-        final episodeSuffix =
-            episodeTitle != null &&
-                episodeTitle.isNotEmpty &&
-                episodeTitle != preview?.name
-            ? ' - $episodeTitle'
-            : '';
-        final seasonEpisodeSuffix = preview?.seasonEpisodeLabel != null
-            ? ' (${preview!.seasonEpisodeLabel})'
-            : '';
-        final l10n = AppLocalizations.of(context);
-        final recordingState = _latestProgram(preview);
-        final badgeLabel = preview == null
-            ? null
-            : preview.isPremiere
-            ? l10n.premiere
-            : preview.isRepeat
-            ? l10n.guideRepeatBadge
-            : null;
+        final now = DateTime.now();
+        final isLive = program != null &&
+            now.isAfter(program.startDate) &&
+            now.isBefore(program.endDate);
         return EpgHeroPreview(
-          title: channel?.name ?? preview?.name ?? l10n.guideTimeline,
-          programTitle: channel == null ? null : preview?.name,
-          programSubtitle: '$episodeSuffix$seasonEpisodeSuffix',
-          channelLogoUrl: channelLogoUrl,
-          programImageUrl: programImageUrl,
-          timeLabel: preview == null
+          title: program?.name ??
+              channel?.name ??
+              AppLocalizations.of(context).guideTimeline,
+          timeLabel: program == null
               ? null
-              : '${_formatTime(preview.startDate)} - ${_formatTime(preview.endDate)}',
-          genreLabel: preview == null ? null : epgGenreFor(preview).label,
-          officialRating: preview?.officialRating,
-          communityRating: preview?.communityRating,
-          badgeLabel: badgeLabel,
-          synopsis: preview?.overview,
+              : '${_formatTime(program.startDate)} - ${_formatTime(program.endDate)}',
+          genreLabel: program == null ? null : epgGenreFor(program).label,
+          synopsis: program?.overview,
+          channelLogoUrl: logoUrl,
           isLive: isLive,
-          hasTimer: recordingState?.hasTimer ?? false,
-          hasSeriesTimer: recordingState?.hasSeriesTimer ?? false,
           apple: _apple,
-          compact: true,
         );
       },
     );
   }
 
-  void _precacheGuideLogoUrl(String url, {required double layoutWidth}) {
-    if (!mounted || url.isEmpty || !_precachedGuideLogoUrls.add(url)) return;
-    unawaited(
-      BoundedNetworkImage.precache(
-        context,
-        url,
-        layoutWidth: layoutWidth,
-        maxWidth: 256,
-      ).catchError((_) {
-        _precachedGuideLogoUrls.remove(url);
-      }),
-    );
-  }
-
-  Widget _buildFilterRail({
-    EdgeInsetsGeometry padding = const EdgeInsets.fromLTRB(16, 6, 16, 6),
-    VoidCallback? onNavigateDown,
-  }) {
-    final filters = _vm.filters;
+  Widget _buildFilterRail() {
+    final filters = GuideFilter.values.where((filter) =>
+        const bool.fromEnvironment('SPESHTV_WEB') || filter != GuideFilter.recentlyWatched).toList();
     return Padding(
-      padding: padding,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       child: EpgFilterRail(
         labels: [for (final f in filters) _filterLabel(f)],
         selectedIndex: filters.indexOf(_vm.filter),
-        onSelect: (i) {
-          _cancelPendingVerticalMove();
-          if (_vm.filter != filters[i]) {
-            _lastFocusedRowIndex = 0;
-            _focusedChannel.value = null;
-          }
-          _vm.setFilter(filters[i]);
-        },
+        onSelect: (i) => _vm.setFilter(filters[i]),
         apple: _apple,
         focusNodeFor: _filterFocusNodeFor,
-        onNavigateDown: onNavigateDown ?? _focusLastChannelRow,
+        onNavigateDown: PlatformDetection.isTV && speshWeb
+            ? () => focusSpeshGuideScope(widget.miniPlayerMode ? _searchControlScope : _heroControlScope,
+                fallback: _searchControlScope)
+            : _focusRowFromMiniPlayer,
       ),
     );
   }
@@ -1283,13 +896,6 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     );
   }
 
-  FocusNode _windowBarFocusNodeFor(int index) {
-    return _windowBarFocusNodes.putIfAbsent(
-      index,
-      () => FocusNode(debugLabel: 'GuideWindowBar:$index'),
-    );
-  }
-
   Widget _buildMobileHeader() {
     final l10n = AppLocalizations.of(context);
     return Padding(
@@ -1298,7 +904,7 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
         children: [
           _GuidePillButton(
             icon: Icons.arrow_back,
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: _returnHome,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1313,7 +919,10 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          _GuidePillButton(icon: Icons.sort, onPressed: _openSortDialog),
+          _GuidePillButton(
+            icon: Icons.sort,
+            onPressed: _openSortDialog,
+          ),
           const SizedBox(width: 6),
           _GuidePillButton(
             icon: Icons.calendar_today,
@@ -1344,22 +953,16 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       case GuideState.loading:
         return const Center(child: CircularProgressIndicator());
       case GuideState.error:
-        final l10n = AppLocalizations.of(context);
         return Center(
           child: Text(
-            l10n.failedToLoadGuide(describeError(_vm.error!, l10n)),
+            AppLocalizations.of(context).failedToLoadGuide(_vm.errorMessage),
             style: TextStyle(color: Colors.white.withAlpha(179)),
           ),
         );
       case GuideState.ready:
         final channels = _vm.filteredChannels;
         if (channels.isEmpty) {
-          return Center(
-            child: Text(
-              AppLocalizations.of(context).noChannelsFound,
-              style: TextStyle(color: Colors.white.withAlpha(179)),
-            ),
-          );
+          return _emptyChannelResults();
         }
         return _mobileView == EpgMobileView.grid
             ? _buildGuideGrid(channels)
@@ -1369,6 +972,7 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
 
   Widget _buildNowNextList(List<GuideChannel> channels) {
     return ListView.builder(
+      controller: _nowNextScrollController,
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 16),
       itemCount: channels.length,
       itemBuilder: (context, index) {
@@ -1385,28 +989,46 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
                 maxHeight: 112,
                 tag: channel.imageTag,
               );
-        final isLive =
-            now != null && t.isAfter(now.startDate) && t.isBefore(now.endDate);
+        final isLive = now != null &&
+            t.isAfter(now.startDate) &&
+            t.isBefore(now.endDate);
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: EpgNowNextCard(
+          child: _GuideFocusableSurface(
+            focusNode: _channelFocusNodeFor(index),
+            onPressed: () => _watchChannel(channel.id, preview: speshWeb),
+            onContextMenu: () => _showChannelActions(channel, index),
+            onFocusChange: (focused) {
+              if (focused) {
+                _lastFocusedRowIndex = index;
+                _focusedChannel.value = channel;
+              }
+            },
+            onKeyEvent: (_, event) {
+              if (event.isActionable && event.logicalKey.isLeftKey) {
+                widget.miniPlayerMode ? _focusMiniPlayer() : _focusGuideControls();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            builder: (focused) => Row(children: [Expanded(child: EpgNowNextCard(
+            interactive: false,
             logoUrl: logoUrl,
             channelName: channel.name,
             channelNumber: channel.number,
-            nowTitle: now?.titleWithEpisode,
+            nowTitle: guideDisplayTitle(now?.name, channel.name),
             nowProgress: now?.progressAt(t) ?? 0,
-            remainingLabel: now == null
-                ? null
-                : _remainingLabel(now.endDate, t),
+            remainingLabel:
+                now == null ? null : _remainingLabel(now.endDate, t),
             nextLabel: next == null
                 ? null
                 : AppLocalizations.of(context)
-                      .guideNextProgram(
-                        _formatTime(next.startDate), next.titleWithEpisode),
+                    .guideNextProgram(_formatTime(next.startDate), next.name),
             isLive: isLive,
             apple: _apple,
             onTap: () => _watchChannel(channel.id),
-            focusNode: _channelFocusNodeFor(index),
+          )), IconButton(tooltip: 'Channel actions', icon: const Icon(Icons.more_vert),
+            onPressed: () => _showChannelActions(channel, index))]),
           ),
         );
       },
@@ -1423,27 +1045,13 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     return m == 0 ? l10n.guideHoursLeft(h) : l10n.guideHoursMinutesLeft(h, m);
   }
 
-  /// The focused program is the object focus last handed over, so a reload
-  /// after a recording change leaves its timer state stale until focus moves.
-  GuideProgram? _latestProgram(GuideProgram? program) {
-    if (program == null) return null;
-    return _vm
-            .programsForChannel(program.channelId)
-            .where((p) => p.id == program.id)
-            .firstOrNull ??
-        program;
-  }
-
   Widget _buildProgramInfoHeader({
     required GuideProgram? program,
     required GuideChannel? channel,
   }) {
     final l10n = AppLocalizations.of(context);
-    final recordingState = _latestProgram(program);
-    final hasTimer = recordingState?.hasTimer ?? false;
-    final hasSeriesTimer = recordingState?.hasSeriesTimer ?? false;
-    final title = program?.name ?? channel?.name ?? l10n.guideTimeline;
-    final episodeLine = program?.episodeLine ?? '';
+    final title = guideDisplayTitle(program?.name, channel?.name ?? l10n.guideTimeline);
+    final episodeTitle = program?.episodeTitle;
     final timeRange = program == null
         ? null
         : '${_formatTime(program.startDate)} - ${_formatTime(program.endDate)}';
@@ -1451,119 +1059,85 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     final channelLabel = channel == null
         ? null
         : channel.number == null || channel.number!.isEmpty
-        ? channel.name
-        : '${channel.number}  ${channel.name}';
+            ? channel.name
+            : '${channel.number}  ${channel.name}';
 
-    return Stack(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
-            borderRadius: AppRadius.circular(12),
-            border: Border.fromBorderSide(
-              ThemeRegistry.active.borders.cardBorder,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: AppRadius.circular(12),
+        border: Border.fromBorderSide(ThemeRegistry.active.borders.cardBorder),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.miniPlayerMode) ...[
+            SizedBox(
+              width: speshWeb ? LiveTvGuideScreen.previewWidth(MediaQuery.sizeOf(context).width) : _kMiniPlayerWidth,
+              height: speshWeb ? LiveTvGuideScreen.previewWidth(MediaQuery.sizeOf(context).width) * .56 : _kMiniPlayerHeight,
+              child: _buildMiniPlayerCard(),
             ),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (widget.miniPlayerMode) ...[
-                SizedBox(
-                  width: _kMiniPlayerWidth,
-                  height: _kMiniPlayerHeight,
-                  child: _buildMiniPlayerCard(),
+            if (!speshWeb || MediaQuery.sizeOf(context).width >= 720) const SizedBox(width: 16),
+          ],
+          if (!speshWeb || !widget.miniPlayerMode || MediaQuery.sizeOf(context).width >= 720) Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: AppTypography.fontSizeXl,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(width: 16),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: AppTypography.fontSizeXl,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                if (timeRange != null || channelLabel != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    [?timeRange, ?channelLabel].join('   '),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: AppTypography.fontSizeSm,
                     ),
-                    if (timeRange != null || channelLabel != null) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              [?timeRange, ?channelLabel].join('   '),
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: AppTypography.fontSizeSm,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (LiveTvRecordingIcon.shows(
-                            hasTimer: hasTimer,
-                            hasSeriesTimer: hasSeriesTimer,
-                          )) ...[
-                            const SizedBox(width: 10),
-                            LiveTvRecordingIcon(
-                              hasTimer: hasTimer,
-                              hasSeriesTimer: hasSeriesTimer,
-                              size: AppTypography.fontSizeSm * 1.2,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                    if (episodeLine.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        episodeLine,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: AppTypography.fontSizeSm,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                    if (overview != null && overview.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        overview,
-                        style: const TextStyle(
-                          color: Colors.white60,
-                          fontSize: AppTypography.fontSizeSm,
-                          height: 1.3,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Back-only dismissal is a TV rule. Desktop and web need a clickable exit.
-        if (!PlatformDetection.isTV)
-          Positioned(
-            top: 4,
-            right: 4,
-            child: _GuidePillButton(
-              icon: Icons.close,
-              onPressed: widget.embedded && widget.onClose != null
-                  ? widget.onClose!
-                  : () => Navigator.of(context).pop(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+                if (episodeTitle != null && episodeTitle.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    episodeTitle,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: AppTypography.fontSizeSm,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+                if (speshWeb && widget.miniPlayerMode) _buildPickerNowNext(showChannel: false),
+                if (!(speshWeb && widget.miniPlayerMode) && overview != null && overview.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    overview,
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: AppTypography.fontSizeSm,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1585,7 +1159,7 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       imageUrl: imageUrl,
       channelName: currentChannel?.name ?? l10n.channels,
       channelNumber: currentChannel?.number,
-      programTitle: currentProgram?.name,
+      programTitle: guideDisplayTitle(currentProgram?.name, currentChannel?.name ?? l10n.channels),
       showLiveVideo: true,
       transparentPreview: widget.embedded,
       appleTvTextureId: widget.appleTvTextureId,
@@ -1596,7 +1170,11 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       onKeyEvent: (_, event) {
         if (!event.isActionable) return KeyEventResult.ignored;
         if (event.logicalKey.isDownKey) {
-          _focusLastChannelRow();
+          if (speshWeb && PlatformDetection.isTV) {
+            focusSpeshGuideScope(_searchControlScope);
+          } else {
+            _focusRowFromMiniPlayer();
+          }
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
@@ -1606,58 +1184,31 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
 
   Widget _buildToolbar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Row(
         children: [
           if (!PlatformDetection.isTV) ...[
             _GuidePillButton(
               icon: Icons.arrow_back,
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: _returnHome,
             ),
             const SizedBox(width: 8),
           ],
-          Expanded(
-            child: _buildFilterRail(
-              padding: EdgeInsets.zero,
-              onNavigateDown: _focusWindowBarFromGenres,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Window paging and the rendered range on the left, the filter, calendar
-  /// and recordings controls on the right. Every button in the row is one
-  /// continuous LEFT/RIGHT run between the genre rail and the channel column.
-  Widget _buildGuideWindowBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
-      child: Row(
-        children: [
-          _windowBarButton(
-            _kWindowBarPrevious,
+          _GuidePillButton(
             icon: Icons.chevron_left,
-            onPressed: () => _shiftGuideWindow(
-              -_vm.guideWindow,
-              focusGrid: false,
-              allowPast: true,
-            ),
+            onPressed: () => _vm.shiftWindow(-_vm.guideWindowHours),
           ),
-          const SizedBox(width: 2),
-          _windowBarButton(
-            _kWindowBarNow,
+          const SizedBox(width: 4),
+          _GuidePillButton(
             label: AppLocalizations.of(context).now,
-            onPressed: _goToNow,
+            onPressed: () => _vm.goToNow(),
           ),
-          const SizedBox(width: 2),
-          _windowBarButton(
-            _kWindowBarNext,
+          const SizedBox(width: 4),
+          _GuidePillButton(
             icon: Icons.chevron_right,
-            onPressed: () =>
-                _shiftGuideWindow(_vm.guideWindow, focusGrid: false),
+            onPressed: () => _vm.shiftWindow(_vm.guideWindowHours),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               '${_formatDate(_vm.guideDate)}  ${_formatTime(_vm.windowStart)} – ${_formatTime(_vm.windowEnd)}',
@@ -1668,65 +1219,23 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 8),
-          _windowBarButton(
-            _kWindowBarSort,
+          _GuidePillButton(
             icon: Icons.sort,
             onPressed: _openSortDialog,
           ),
-          const SizedBox(width: 4),
-          _windowBarButton(
-            _kWindowBarDate,
+          const SizedBox(width: 8),
+          _GuidePillButton(
             icon: Icons.calendar_today,
             onPressed: _openDatePicker,
           ),
-          const SizedBox(width: 4),
-          _windowBarButton(
-            _kWindowBarRecordings,
+          const SizedBox(width: 8),
+          _GuidePillButton(
             icon: Icons.fiber_dvr,
             label: AppLocalizations.of(context).recordings,
             onPressed: _openRecordings,
           ),
         ],
       ),
-    );
-  }
-
-  /// One button of the controls row, wired into its horizontal run and into
-  /// the genre rail above and the channel column below.
-  Widget _windowBarButton(
-    int index, {
-    IconData? icon,
-    String? label,
-    required VoidCallback onPressed,
-  }) {
-    return _GuidePillButton(
-      icon: icon,
-      label: label,
-      compact: true,
-      focusNode: _windowBarFocusNodeFor(index),
-      onPressed: onPressed,
-      onKeyEvent: (_, event) {
-        if (!event.isActionable) return KeyEventResult.ignored;
-        final key = event.logicalKey;
-        if (key.isLeftKey) {
-          _focusWindowBar(index - 1);
-          return KeyEventResult.handled;
-        }
-        if (key.isRightKey) {
-          _focusWindowBar(index + 1);
-          return KeyEventResult.handled;
-        }
-        if (key.isUpKey) {
-          _focusFilterRail();
-          return KeyEventResult.handled;
-        }
-        if (key.isDownKey) {
-          _focusLastChannelRow();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
     );
   }
 
@@ -1741,6 +1250,7 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       GuideFilter.kids => l10n.kids,
       GuideFilter.premiere => l10n.premiere,
       GuideFilter.favorites => l10n.favorites,
+      GuideFilter.recentlyWatched => 'Recently watched',
     };
   }
 
@@ -1749,46 +1259,59 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       case GuideState.loading:
         return const Center(child: CircularProgressIndicator());
       case GuideState.error:
-        final l10n = AppLocalizations.of(context);
         return Center(
           child: Text(
-            l10n.failedToLoadGuide(describeError(_vm.error!, l10n)),
+            AppLocalizations.of(context).failedToLoadGuide(_vm.errorMessage),
             style: TextStyle(color: Colors.white.withAlpha(179)),
           ),
         );
       case GuideState.ready:
         final channels = _vm.filteredChannels;
         if (channels.isEmpty) {
-          return Center(
-            child: Text(
-              AppLocalizations.of(context).noChannelsFound,
-              style: TextStyle(color: Colors.white.withAlpha(179)),
-            ),
-          );
+          return _emptyChannelResults();
         }
         return _buildGuideGrid(channels);
     }
   }
 
+  Widget _emptyChannelResults() {
+    final l10n = AppLocalizations.of(context);
+    if (!const bool.fromEnvironment('SPESHTV_WEB')) {
+      return Center(child: Text(l10n.noChannelsFound,
+          style: TextStyle(color: Colors.white.withAlpha(179))));
+    }
+    return SpeshEmptyResults(title: l10n.noChannelsFound, clearFiltersLabel: l10n.clearFilters,
+      onClearFilters: _vm.activeChannelFilterCount > 0 ? () => _vm.clearBrowseFilters() : null,
+      onClearSearch: _searchController.text.trim().isNotEmpty ? () {
+        _searchDebounce?.cancel();
+        _searchController.clear();
+        _vm.setChannelQuery('');
+      } : null,
+    );
+  }
+
   Widget _buildGuideGrid(List<GuideChannel> channels) {
     final guideWidth = _totalGuideWidth();
-    final profile = _layoutProfile;
 
     return Column(
       children: [
         HorizontalScrollSection(
-          title: '',
+          title: AppLocalizations.of(context).guideTimeline,
           scrollController: _timeHeaderHorizontalScrollController,
-          onScrollPastStart: () =>
-              _shiftGuideWindow(const Duration(minutes: -30), focusGrid: false),
-          onScrollPastEnd: () =>
-              _shiftGuideWindow(const Duration(minutes: 30), focusGrid: false),
-          showControls: false,
+          onScrollPastStart: () => _vm.shiftWindow(-1),
+          onScrollPastEnd: () => _vm.shiftWindow(1),
+          titleStyle: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+          headerPadding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
+          contentSpacing: 2,
           builder: (_, controller) => SizedBox(
-            height: profile.timeHeaderHeight,
+            height: _kTimeHeaderHeight,
             child: Row(
               children: [
-                SizedBox(width: profile.channelColumnWidth),
+                const SizedBox(width: _kChannelColumnWidth),
                 Expanded(
                   child: SingleChildScrollView(
                     controller: controller,
@@ -1808,11 +1331,11 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
           child: Row(
             children: [
               SizedBox(
-                width: profile.channelColumnWidth,
+                width: _kChannelColumnWidth,
                 child: ListView.builder(
                   controller: _channelScrollController,
                   itemCount: channels.length,
-                  itemExtent: profile.rowHeight,
+                  itemExtent: _kRowHeight,
                   itemBuilder: (context, index) {
                     _maybeLoadMore(index);
                     return _buildChannelCell(channels[index], index);
@@ -1827,10 +1350,12 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
                 child: _GuideGridView(
                   channels: channels,
                   guideWidth: guideWidth,
-                  rowHeight: profile.rowHeight,
                   verticalController: _programScrollController,
                   horizontalController: _guideHorizontalScrollController,
                   buildProgramRow: _buildProgramRow,
+                  programsForChannel: _vm.programsForChannel,
+                  hasProgramsFor: _vm.hasProgramsFor,
+                  buildPlaceholderRow: _buildProgramPlaceholderRow,
                 ),
               ),
             ],
@@ -1841,15 +1366,14 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
   }
 
   Widget _buildTimeHeader(double totalWidth) {
-    final profile = _layoutProfile;
     final slots = <Widget>[];
     var time = _vm.windowStart;
     while (time.isBefore(_vm.windowEnd)) {
-      final slotWidth = 30 * profile.pixelsPerMinute;
+      final slotWidth = 30 * _kPixelsPerMinute;
       slots.add(
         SizedBox(
           width: slotWidth,
-          height: profile.timeHeaderHeight,
+          height: _kTimeHeaderHeight,
           child: Align(
             alignment: Alignment.centerLeft,
             child: Padding(
@@ -1866,7 +1390,7 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     }
     return SizedBox(
       width: totalWidth,
-      height: profile.timeHeaderHeight,
+      height: _kTimeHeaderHeight,
       child: Row(children: slots),
     );
   }
@@ -1875,55 +1399,51 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
     final imageUrl = channel.imageTag != null
         ? _vm.imageApi.getPrimaryImageUrl(
             channel.id,
-            maxHeight: _layoutProfile.rowHeight.toInt(),
+            maxHeight: _kRowHeight.toInt(),
             tag: channel.imageTag,
           )
         : null;
-    if (imageUrl != null) {
-      _precacheGuideLogoUrl(imageUrl, layoutWidth: 34);
-    }
 
     return _GuideFocusableSurface(
+      key: ValueKey('guide-channel-${channel.id}'),
       focusNode: _channelFocusNodeFor(index),
-      onPressed: () => _watchChannel(channel.id),
+      onContextMenu: () => _showChannelActions(channel, index),
+      onPreview: speshWeb && widget.miniPlayerMode ? () {
+        _focusedProgram.value = null;
+        _focusedChannel.value = channel;
+      } : null,
+      onPressed: () => _watchChannel(channel.id, preview: speshWeb),
       onKeyEvent: (_, event) {
-        if (!event.isActionable) return KeyEventResult.ignored;
-        final pageDirection = event.logicalKey.pageDirection;
-        if (pageDirection != 0) {
-          _onNavigationKey();
-          _focusChannelRow(
-            (index + pageDirection * _rowsPerViewport()).clamp(
-              0,
-              _vm.filteredChannels.length - 1,
-            ),
-          );
+        if (!event.isActionable) {
+          return KeyEventResult.ignored;
+        }
+        if (event.logicalKey.isRightKey) {
+          _programRowKeys[index]?.currentState?.focusAt(
+              _programAnchor ?? DateTime.now());
           return KeyEventResult.handled;
         }
-        final key = event.logicalKey;
-        if (key.isUpKey) {
-          _onNavigationKey();
-          if (index == 0) {
-            _focusWindowBarFromGrid();
+        if (event.logicalKey.isLeftKey) {
+          if (widget.miniPlayerMode) { _focusMiniPlayer(); }
+          else { _focusGuideControls(); }
+          return KeyEventResult.handled;
+        }
+        if (index == 0 && event.logicalKey.isUpKey) {
+          if (widget.miniPlayerMode && !speshWeb) {
+            _focusMiniPlayer();
           } else {
-            _focusChannelRow(index - 1);
+            _focusGuideControls();
           }
           return KeyEventResult.handled;
         }
-        if (key.isDownKey) {
-          _onNavigationKey();
-          if (index < _vm.filteredChannels.length - 1) {
-            _focusChannelRow(index + 1);
+        if (event.logicalKey.isUpKey || event.logicalKey.isDownKey) {
+          final target = index + (event.logicalKey.isUpKey ? -1 : 1);
+          if (target >= 0 && target < _vm.filteredChannels.length) {
+            _scrollToRow(target);
+            _channelFocusNodes[target]?.requestFocus();
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _channelFocusNodes[target]?.requestFocus();
+            });
           }
-          return KeyEventResult.handled;
-        }
-        if (key.isRightKey) {
-          _onNavigationKey();
-          _focusProgramFromChannel(index);
-          return KeyEventResult.handled;
-        }
-        if (key.isLeftKey) {
-          _onNavigationKey();
-          _focusFilterRail();
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
@@ -1931,576 +1451,155 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       onFocusChange: (focused) {
         if (!focused) return;
         _scrollToRow(index);
-        _channelRailFocused.value = true;
         _focusedProgram.value = null;
         _focusedChannel.value = channel;
       },
       builder: (focused) => Container(
-        height: _layoutProfile.rowHeight,
-        // The cell brings its own vertical padding. Doubling it here starved
-        // the number chip and name of height and overflowed the row.
-        padding: const EdgeInsets.symmetric(horizontal: 6),
+        height: _kRowHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         decoration: BoxDecoration(
-          border: Border(bottom: ThemeRegistry.active.borders.cardBorder),
+          border: Border(
+            bottom: ThemeRegistry.active.borders.cardBorder,
+          ),
         ),
-        child: EpgChannelCell(
+        child: Row(children: [Expanded(child: EpgChannelCell(
           logoUrl: imageUrl,
           name: channel.name,
           number: channel.number,
           focused: focused,
           apple: _apple,
           isFavorite: channel.isFavorite,
-        ),
+        )), ExcludeFocus(child: IconButton(
+          tooltip: 'Channel actions',
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 26, height: 36),
+          icon: const Icon(Icons.more_vert, size: 20),
+          onPressed: () => _showChannelActions(channel, index),
+        ))]),
       ),
     );
   }
 
-  /// The cell timeline for one channel. The single place `buildRowCells` is
-  /// called, so a row the screen navigates to is built the same way it renders.
-  List<GuideCell> _cellsForChannel(String channelId) => buildRowCells(
-    visible: _vm.programsForChannel(channelId),
-    unfiltered: _vm.unfilteredProgramsForChannel(channelId),
-    windowStart: _vm.windowStart,
-    windowEnd: _vm.windowEnd,
-    loadState: _vm.loadStateFor(channelId),
-  );
-
-  List<GuideCell> _cellsForRow(int rowIndex) {
-    final channels = _vm.filteredChannels;
-    if (rowIndex < 0 || rowIndex >= channels.length) return const [];
-    return _cellsForChannel(channels[rowIndex].id);
-  }
-
-  /// True while a row's cells are nothing but the placeholder the loading
-  /// state produces, so there is no real cell to land on yet.
-  static bool _cellsAreLoading(List<GuideCell> cells) =>
-      cells.length == 1 && cells.first.kind == GuideCellKind.loading;
-
-  /// Enters the program row at the same timeline anchor the viewer last
-  /// used, falling back to now when focus arrived through the channel rail.
-  void _focusProgramFromChannel(int rowIndex) {
-    final channels = _vm.filteredChannels;
-    if (rowIndex < 0 || rowIndex >= channels.length) return;
-    final cells = _cellsForChannel(channels[rowIndex].id);
-    final rowState = _rowStates[rowIndex];
-    if (cells.isEmpty || rowState == null || _cellsAreLoading(cells)) return;
-
-    final current = _selection;
-    final rawAnchor = current?.anchorTime ?? DateTime.now();
-    final anchor = rawAnchor.isBefore(_vm.windowStart)
-        ? _vm.windowStart
-        : rawAnchor.isAfter(_vm.windowEnd)
-        ? _vm.windowEnd.subtract(const Duration(microseconds: 1))
-        : rawAnchor;
-    final index = resolveCellIndexAt(cells, anchor);
-    final cell = cells[index];
-    _selection = GuideSelection(
-      channelId: channels[rowIndex].id,
-      anchorTime: clampAnchorInto(cell, anchor),
-      programId: cell.program?.id,
-    );
-    rowState.focusCellAt(index);
-  }
-
-  /// Moves one row while holding [GuideSelection.anchorTime], so the selection
-  /// keeps its place in time instead of following the nearest rectangle. An
-  /// unresolvable row defers the move instead of landing arbitrarily.
-  void _moveSelectionVertically(int fromRowIndex, int delta) {
-    final selection = _selection;
-    if (selection == null) return;
-    final target = fromRowIndex + delta;
-    if (target < 0 || target >= _vm.filteredChannels.length) return;
-    final cells = _cellsForRow(target);
-    if (cells.isEmpty) return;
-
-    final rowState = _rowStates[target];
-    if (rowState == null || _cellsAreLoading(cells)) {
-      _pendingVerticalMove = _PendingVerticalMove(
-        targetRowIndex: target,
-        anchorTime: selection.anchorTime,
-      );
-      return;
-    }
-    rowState.focusCellAt(resolveCellIndexAt(cells, selection.anchorTime));
-  }
-
-  /// Completes the deferred move once its row is mounted and loaded. The
-  /// intent survives until then or until something clears it.
-  void _applyPendingVerticalMove() {
-    final pending = _pendingVerticalMove;
-    if (pending == null) return;
-    // Deferred to a later frame, so the viewer may have opened a channel in
-    // the meantime. The move is theirs to finish when they come back, not
-    // something to take the remote for now.
-    if (!_mayTakeFocus) return;
-    final cells = _cellsForRow(pending.targetRowIndex);
-    if (cells.isEmpty || _cellsAreLoading(cells)) return;
-    final rowState = _rowStates[pending.targetRowIndex];
-    if (rowState == null) return;
-
-    _pendingVerticalMove = null;
-    rowState.focusCellAt(resolveCellIndexAt(cells, pending.anchorTime));
-  }
-
-  /// Defers the apply to after the current frame. Rows report themselves while
-  /// building, when focus must not be requested.
-  void _scheduleApplyPendingVerticalMove() {
-    if (_pendingVerticalMove == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _applyPendingVerticalMove();
-    });
-  }
-
-  /// Records the input so a re-anchor can stay out of the way, then drops the
-  /// deferred move.
-  void _onNavigationKey() {
-    _lastDpadEventAt = DateTime.now();
-    _cancelPendingVerticalMove();
-  }
-
-  /// Arms a single timer for the next :00/:30 rather than polling. The window
-  /// only moves on the half hour [guideLeftEdge] floors to.
-  void _scheduleReanchor() {
-    _reanchorTimer?.cancel();
-    final now = DateTime.now();
-    final next = floorToHalfHour(now).add(const Duration(minutes: 30));
-    _reanchorTimer = Timer(next.difference(now), _onReanchorTick);
-  }
-
-  void _onReanchorTick() {
-    if (!mounted) return;
-    final now = DateTime.now();
-    final lastInput = _lastDpadEventAt;
-    if (lastInput != null) {
-      final quiet = _kReanchorInputQuiet - now.difference(lastInput);
-      if (quiet > Duration.zero) {
-        // Mid-input: wait out the quiet period instead of moving under the user.
-        _reanchorTimer = Timer(quiet, _onReanchorTick);
-        return;
-      }
-    }
-    _scheduleReanchor();
-    unawaited(_reanchor(now));
-  }
-
-  /// Re-resolves the selection against the window as the clock moves it, and
-  /// puts focus back on the cell the new anchor lands on.
-  Future<void> _reanchor(DateTime now) async {
-    if (!_vm.atLivePosition) return;
-    try {
-      await _vm.setWindowStart(guideLeftEdge(now), livePosition: true);
-    } catch (_) {
-      if (mounted) _vm.scheduleBoundaryRefresh();
-      return;
-    }
-    if (!mounted) return;
-    await _vm.refreshAtQuarterHour();
-    if (!mounted) return;
-    final selection = _selection;
-    if (selection == null) return;
-    final cells = _cellsForChannel(selection.channelId);
-    if (cells.isEmpty) return;
-
-    final updated = reanchorSelection(
-      current: selection,
-      cells: cells,
-      now: now,
-    );
-    if (updated.anchorTime == selection.anchorTime &&
-        updated.programId == selection.programId) {
-      return;
-    }
-
-    _cancelPendingVerticalMove();
-    _selection = updated;
-    _focusSelectedCell(updated, cells);
-  }
-
-  void _focusSelectedCell(GuideSelection selection, List<GuideCell> cells) {
-    // The reanchor timer reaches here on its own, driven by the clock rather
-    // than by the viewer: when a programme boundary passes it re-resolves the
-    // selection and puts focus on the new cell. If the viewer has since opened
-    // a channel, that focus lands on a cell behind the player and every remote
-    // key goes to a screen nobody can see -- watching fine for a while, then
-    // the remote stops answering, with nothing the viewer did to cause it.
-    // Keep re-resolving the selection so the guide is correct when they come
-    // back; just do not take the remote to do it.
-    if (!_mayTakeFocus) return;
-    if (_cellsAreLoading(cells)) return;
-    final rowIndex = _vm.filteredChannels.indexWhere(
-      (channel) => channel.id == selection.channelId,
-    );
-    if (rowIndex < 0) return;
-    _rowStates[rowIndex]?.focusCellAt(
-      resolveCellIndexAt(cells, selection.anchorTime),
-    );
-  }
-
-  /// Drops the deferred move: the destination it referred to is no longer what
-  /// the user is asking for.
-  void _cancelPendingVerticalMove() {
-    _pendingVerticalMove = null;
-  }
-
-  /// [focusGrid] is false when a control drove the shift, so pressing a
-  /// chevron doesn't yank focus down into the grid. [allowPast] is true only
-  /// for the back chevron, the one way to browse earlier than the live window.
-  Future<void> _shiftGuideWindow(
-    Duration amount, {
-    bool focusGrid = true,
-    bool allowPast = false,
-  }) async {
-    _cancelPendingVerticalMove();
-    final oldStart = _vm.windowStart;
-    final oldEnd = _vm.windowEnd;
-    final target = oldStart.add(amount);
-    final liveStart = guideLeftEdge(DateTime.now());
-    // Only the back chevron may look at history, and only as far as the
-    // server realistically keeps it. Every other backward path exists to
-    // return toward live after paging ahead.
-    final backFloor = liveStart.subtract(_kMaxGuideHistory);
-    final floor = allowPast ? backFloor : liveStart;
-    final clamped = amount.isNegative && target.isBefore(floor)
-        ? floor
-        : target;
-    if (clamped == oldStart) return;
-
-    try {
-      await _vm.setWindowStart(clamped, livePosition: clamped == liveStart);
-    } catch (_) {
-      return;
-    }
-    if (!mounted) return;
-    final selection = _selection;
-    if (selection == null) return;
-    final cells = _cellsForChannel(selection.channelId);
-    if (cells.isEmpty) return;
-    final edgeAnchor = amount.isNegative
-        ? oldStart.subtract(const Duration(microseconds: 1))
-        : oldEnd;
-    final index = resolveCellIndexAt(cells, edgeAnchor);
-    final cell = cells[index];
-    final updated = selection.copyWith(
-      anchorTime: clampAnchorInto(cell, edgeAnchor),
-      programId: cell.program?.id,
-      clearProgramId: cell.program == null,
-    );
-    _selection = updated;
-    if (focusGrid) _focusSelectedCell(updated, cells);
-  }
-
-  /// Whole rows the grid shows at once, so a page key moves exactly one screen.
-  int _rowsPerViewport() {
-    if (!_programScrollController.hasClients) return 1;
-    final rows =
-        (_programScrollController.position.viewportDimension /
-                _layoutProfile.rowHeight)
-            .floor();
-    return rows < 1 ? 1 : rows;
-  }
-
-  /// Pages channel rows by one viewport. This is vertical movement, so it runs
-  /// through the same resolver and leaves the anchor time untouched.
-  void _pageChannelRows(int fromRowIndex, int direction) {
-    final channels = _vm.filteredChannels;
-    if (channels.isEmpty) return;
-    final target = (fromRowIndex + direction * _rowsPerViewport()).clamp(
-      0,
-      channels.length - 1,
-    );
-    if (target == fromRowIndex) return;
-    _moveSelectionVertically(fromRowIndex, target - fromRowIndex);
-    // A row a viewport away is usually unbuilt. Scrolling mounts it so the
-    // deferred move can complete.
-    if (_pendingVerticalMove != null) _scrollToRow(target);
-  }
-
-  /// Puts the anchor on the new window start after a jump, so it addresses the
-  /// first cell of every row instead of a time the window no longer covers.
-  void _anchorToWindowStart() {
-    final selection = _selection;
-    if (selection == null) return;
-    final cells = _cellsForChannel(selection.channelId);
-    if (cells.isEmpty) {
-      _selection = selection.copyWith(
-        anchorTime: _vm.windowStart,
-        clearProgramId: true,
-      );
-      return;
-    }
-    final cell = cells[resolveCellIndexAt(cells, _vm.windowStart)];
-    final updated = selection.copyWith(
-      anchorTime: clampAnchorInto(cell, _vm.windowStart),
-      programId: cell.program?.id,
-      clearProgramId: cell.program == null,
-    );
-    _selection = updated;
-    _focusSelectedCell(updated, cells);
-  }
-
-  Future<void> _goToNow() async {
-    _cancelPendingVerticalMove();
-    await _vm.goToNow(windowStart: guideLeftEdge(DateTime.now()));
-    if (!mounted) return;
-    _anchorToWindowStart();
-  }
-
-  /// The channel the guide considers "home": the last one the user actually
-  /// tuned, read live off the always-current preference rather than a copy
-  /// cached at some earlier point.
-  String? get _homeChannelId {
-    final id = _prefs.get(UserPreferences.liveTvLastChannelId).trim();
-    return id.isEmpty ? null : id;
-  }
-
-  /// True once the user has paged the window off live or moved focus onto a
-  /// channel other than [_homeChannelId] -- anywhere in the grid, channel
-  /// column included. When nothing has ever been tuned, row 0 stands in for
-  /// home, since that is where [_scheduleInitialChannelFocus] falls back to
-  /// on first use; checked by real focus on that row's node rather than
-  /// channel identity, since a genre filter can swap which channel sits at
-  /// row 0 without moving focus off a node that was already focused there.
-  bool _isExploringAwayFromEntry() {
-    final homeId = _homeChannelId;
-    if (homeId != null) {
-      return !_vm.atLivePosition || _focusedChannel.value?.id != homeId;
-    }
-    if (_vm.filteredChannels.isEmpty) return false;
-    return !_vm.atLivePosition || !_channelFocusNodeFor(0).hasFocus;
-  }
-
-  /// True while [_resetToEntryState] is awaiting its reload, so a second back
-  /// press in that window doesn't start the reset over.
-  bool _resettingToEntryState = false;
-
-  /// Resets to [_homeChannelId], re-resolving it into
-  /// [LiveTvGuideViewModel.filteredChannels] AFTER [_goToNow] reloads the
-  /// lineup, since a genre filter can change which channels are present
-  /// during that reload -- resolving before it would risk landing on
-  /// whatever channel now sits at a stale index. With nothing ever tuned,
-  /// resets to row 0 instead, the same first-use fallback as
-  /// [_scheduleInitialChannelFocus].
-  Future<void> _resetToEntryState() async {
-    _resettingToEntryState = true;
-    try {
-      // Not _goToNow(): its full reload tears the grid down. This keeps the
-      // rows up and only refetches programs when the window was paged away.
-      _cancelPendingVerticalMove();
-      await _vm.setWindowStart(
-        guideLeftEdge(DateTime.now()),
-        livePosition: true,
-      );
-      if (mounted) _anchorToWindowStart();
-    } catch (_) {
-      // Fall back to the full reload, which shows its own error state.
-      if (mounted) await _goToNow();
-    }
-    if (!mounted) {
-      _resettingToEntryState = false;
-      return;
-    }
-    final homeId = _homeChannelId;
-    final channels = _vm.filteredChannels;
-    int index;
-    if (homeId != null) {
-      index = channels.indexWhere((channel) => channel.id == homeId);
-      if (index < 0) {
-        _resettingToEntryState = false;
-        return;
-      }
-    } else {
-      if (channels.isEmpty) {
-        _resettingToEntryState = false;
-        return;
-      }
-      index = 0;
-    }
-    // Set the tracked focus target directly instead of waiting on the
-    // channel row's own focus-change callback: the row can be scrolled many
-    // screens away, so its FocusNode isn't attached until the list has
-    // scrolled and rebuilt that far, which the requestFocus() below can't
-    // wait for. Without this, _isExploringAwayFromEntry() kept seeing the old
-    // focused channel after a "reset" that never visually landed, so every
-    // later back press re-triggered the same no-op reset instead of ever
-    // exiting.
-    _channelRailFocused.value = true;
-    _focusedProgram.value = null;
-    _focusedChannel.value = channels[index];
-    // Neither the field assignments above nor the reload behind _goToNow()
-    // are guaranteed to have scheduled a frame, and addPostFrameCallback
-    // only runs on a frame that actually happens -- so without an explicit
-    // scheduleFrame() the row can sit waiting for whatever unrelated widget
-    // (e.g. the guide's own clock) next triggers one. Schedule both frames
-    // this needs explicitly: one for the callback below to fire at all, and
-    // a second because the target row may still be off-screen with its
-    // FocusNode not yet attached, exactly as in _scheduleInitialChannelFocus.
-    final binding = WidgetsBinding.instance;
-    binding.addPostFrameCallback((_) {
-      if (!mounted) {
-        _resettingToEntryState = false;
-        return;
-      }
-      binding.scheduleFrame();
-      binding.addPostFrameCallback((_) {
-        if (mounted) _focusChannelRow(index, animate: false);
-        _resettingToEntryState = false;
-      });
-    });
-    binding.scheduleFrame();
-  }
-
-  /// A back press resolves here first: if the grid has drifted from where the
-  /// user would have landed opening the guide fresh, back re-homes it instead
-  /// of exiting. Returns true when it handled the press. With nothing to
-  /// re-home (already there, or a filter hides the entry channel), a TV moves
-  /// focus up to the header and the next back leaves. Elsewhere the press
-  /// falls through to the normal close/exit path. With no channel ever tuned,
-  /// the target is row 0 as long as the lineup is non-empty.
-  bool _consumeBackIfExploring() {
-    // A reset already running owns this press. Consuming it keeps the guide
-    // from closing out from under a reset that is about to land.
-    if (_resettingToEntryState) return true;
-    if (PlatformDetection.isTV && !_gridHasFocus) return false;
-    if (!_isExploringAwayFromEntry()) {
-      if (!PlatformDetection.isTV) return false;
-      return _focusGuideHeader();
-    }
-    final homeId = _homeChannelId;
-    if (homeId != null) {
-      final index = _vm.filteredChannels.indexWhere(
-        (channel) => channel.id == homeId,
-      );
-      if (index < 0) {
-        if (!PlatformDetection.isTV) return false;
-        return _focusGuideHeader();
-      }
-    } else if (_vm.filteredChannels.isEmpty) {
-      if (!PlatformDetection.isTV) return false;
-      return _focusGuideHeader();
-    }
-    unawaited(_resetToEntryState());
-    return true;
-  }
-
-  /// Anchor for the first focused cell: now while the window covers it, and
-  /// the window start otherwise.
-  DateTime _seedAnchorInto(GuideCell cell) {
-    final now = DateTime.now();
-    final base = !now.isBefore(_vm.windowStart) && now.isBefore(_vm.windowEnd)
-        ? now
-        : _vm.windowStart;
-    return clampAnchorInto(cell, base);
-  }
-
-  /// A horizontal move is the only navigation that rewrites the anchor.
-  void _onHorizontalMove(GuideCell cell, double left, double width) {
-    final selection = _selection;
-    if (selection != null) {
-      _selection = selection.copyWith(
-        anchorTime: clampAnchorInto(cell, cell.start),
+  Widget _buildProgramRow(List<GuideProgram> programs, int rowIndex) {
+    if (programs.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: ThemeRegistry.active.borders.cardBorder,
+          ),
+        ),
       );
     }
-    _ensureProgramVisible(left, width);
-  }
 
-  Widget _buildProgramRow(String channelId, int rowIndex) {
     return _GuideProgramRow(
-      cells: _cellsForChannel(channelId),
+      key: _programRowKeys.putIfAbsent(rowIndex, () => GlobalKey<_GuideProgramRowState>()),
+      programs: programs,
       rowIndex: rowIndex,
-      rowStates: _rowStates,
-      selection: _selection,
-      onVerticalMove: _moveSelectionVertically,
-      onPageRows: _pageChannelRows,
-      onNavigationKey: _onNavigationKey,
-      onRowMounted: _scheduleApplyPendingVerticalMove,
       windowStart: _vm.windowStart,
       windowEnd: _vm.windowEnd,
-      pixelsPerMinute: _layoutProfile.pixelsPerMinute,
-      rowHeight: _layoutProfile.rowHeight,
-      horizontalController: _guideHorizontalScrollController,
       apple: _apple,
-      onLeftEdge: () => _onProgramLeftEdge(rowIndex),
-      onRightEdge: () =>
-          unawaited(_shiftGuideWindow(const Duration(minutes: 30))),
-      noProgramDataLabel: AppLocalizations.of(context).noProgramData,
-      // Per A3: a gap or filtered hole tunes live, never opens the recording
-      // dialog. Loading is inert. Failed has no retry producer yet.
-      onProgramSelected: (cell) {
-        switch (cell.kind) {
-          case GuideCellKind.program:
-            final program = cell.program;
-            if (program == null) return;
-            _showProgramDetails(program);
-          case GuideCellKind.gap:
-          case GuideCellKind.filtered:
-            _watchChannel(channelId);
-          case GuideCellKind.loading:
-          case GuideCellKind.failed:
-            break;
+      onLeftEdge: () => _focusChannelRow(rowIndex),
+      onVerticalMove: (delta) {
+        final target = rowIndex + delta;
+        if (target < 0 || target >= _vm.filteredChannels.length) return;
+        _scrollToRow(target);
+        void focusTarget() {
+          if (!mounted) return;
+          _programRowKeys[target]?.currentState?.focusAt(_programAnchor ?? DateTime.now());
+        }
+        focusTarget();
+        WidgetsBinding.instance.addPostFrameCallback((_) => focusTarget());
+      },
+      onProgramSelected: widget.miniPlayerMode
+          ? (program) => _watchChannel(program.channelId)
+          : _showProgramDetails,
+      onTopEdge: rowIndex == 0
+          ? (widget.miniPlayerMode && !speshWeb
+              ? _focusMiniPlayer
+              : _focusGuideControls)
+          : null,
+      onProgramFocused: (program, left, width, vertical) {
+        _focusedProgram.value = program;
+        _focusedChannel.value = _vm.channelForId(program.channelId);
+        _scrollToRow(rowIndex);
+        if (!vertical) {
+          _programAnchor = program.startDate.isBefore(_vm.windowStart)
+              ? _vm.windowStart : program.startDate;
+        }
+        if (!vertical && _guideHorizontalScrollController.hasClients) {
+          final viewport = _guideHorizontalScrollController.position.viewportDimension;
+          final max = _guideHorizontalScrollController.position.maxScrollExtent;
+          final target = (left + (width / 2) - (viewport / 2)).clamp(0.0, max);
+          _guideHorizontalScrollController.animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+          );
         }
       },
-      onTopEdge: rowIndex == 0 ? _focusWindowBarFromGrid : null,
-      onProgramFocused: (cell, _, _) {
-        _channelRailFocused.value = false;
-        _focusedProgram.value = cell.program;
-        _focusedChannel.value = _vm.channelForId(channelId);
-        _scrollToRow(rowIndex);
-        final current = _selection;
-        _selection = current == null
-            ? GuideSelection(
-                channelId: channelId,
-                anchorTime: _seedAnchorInto(cell),
-                programId: cell.program?.id,
-              )
-            : current.copyWith(
-                channelId: channelId,
-                programId: cell.program?.id,
-                clearProgramId: cell.program == null,
-              );
-      },
-      onHorizontalMove: _onHorizontalMove,
+      formatTime: _formatTime,
     );
   }
 
-  void _onProgramLeftEdge(int rowIndex) {
-    final liveStart = guideLeftEdge(DateTime.now());
-    if (_vm.windowStart.isAfter(liveStart)) {
-      unawaited(_shiftGuideWindow(const Duration(minutes: -30)));
+  Future<void> _showChannelActions(GuideChannel channel, int row) async {
+    if (!_guideIsCurrent || _channelActionsOpen) return;
+    _channelActionsOpen = true;
+    _focusedChannel.value = channel;
+    _lastFocusedRowIndex = row;
+    String? action;
+    try {
+      action = await showDialog<String>(context: context, builder: (dialogContext) =>
+        Focus(onKeyEvent: (_, event) {
+          if (event.logicalKey.isBackKey) {
+            if (event is KeyDownEvent) Navigator.of(dialogContext).pop();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        }, child: AlertDialog(
+          title: Text(channel.name),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            ListTile(autofocus: true, leading: const Icon(Icons.fullscreen),
+              title: const Text('Watch Full Screen'),
+              onTap: () => Navigator.pop(dialogContext, 'watch')),
+            ListTile(leading: const Icon(Icons.picture_in_picture_alt),
+              title: const Text('Preview'),
+              onTap: () => Navigator.pop(dialogContext, 'preview')),
+            ListTile(leading: Icon(channel.isFavorite ? Icons.favorite : Icons.favorite_border),
+              title: Text(channel.isFavorite ? 'Remove Favorite' : 'Add Favorite'),
+              onTap: () => Navigator.pop(dialogContext, 'favorite')),
+          ]),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'))],
+        )));
+      if (!mounted) return;
+      if (action == 'favorite') {
+        try {
+          await _vm.toggleChannelFavorite(channel.id);
+        } catch (_) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not save channel favorite. Please retry.')));
+        }
+      } else if (action == 'watch' || action == 'preview') {
+        _watchChannel(channel.id, preview: action == 'preview');
+        if (action == 'watch' && widget.embedded) {
+          widget.onClose?.call();
+        }
+      }
+    } finally {
+      _channelActionsOpen = false;
+      if (mounted && (action == null || action == 'favorite')) {
+        _focusedChannel.value = _vm.channelForId(channel.id) ?? channel;
+        _focusRowFromMiniPlayer();
+      }
+    }
+  }
+
+  void _watchChannel(String channelId, {bool preview = false}) {
+    if (widget.embedded && widget.onChannelSelectedWithLineup != null) {
+      widget.onChannelSelectedWithLineup!(channelId, _vm.channels);
       return;
     }
-    _focusChannelRow(rowIndex);
-  }
-
-  /// Scrolls the guide the minimum distance needed to bring a cell on screen.
-  void _ensureProgramVisible(double left, double width) {
-    if (!_guideHorizontalScrollController.hasClients) return;
-    final position = _guideHorizontalScrollController.position;
-    final offset = position.pixels;
-    final viewport = position.viewportDimension;
-    final right = left + width;
-
-    double? target;
-    if (left < offset) {
-      target = left - _kGuideScrollLead;
-    } else if (right > offset + viewport) {
-      // A cell wider than the viewport aligns on its leading edge instead.
-      target = width > viewport
-          ? left - _kGuideScrollLead
-          : right + _kGuideScrollLead - viewport;
-    }
-    if (target == null) return;
-
-    final clamped = target.clamp(0.0, position.maxScrollExtent);
-    if (clamped == offset) return;
-    _guideHorizontalScrollController.animateTo(
-      clamped,
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-    );
-  }
-
-  Future<void> _watchChannel(String channelId) async {
-    unawaited(_prefs.set(UserPreferences.liveTvLastChannelId, channelId));
     if (widget.embedded && widget.onChannelSelected != null) {
       widget.onChannelSelected!(channelId);
       return;
@@ -2510,417 +1609,248 @@ class _LiveTvGuideScreenState extends State<LiveTvGuideScreen>
       return;
     }
 
-    final channels = _vm.filteredChannels;
+    final channels = speshWeb ? _vm.channels : _vm.filteredChannels;
     final index = channels.indexWhere((channel) => channel.id == channelId);
     if (index < 0) return;
-    _vm.resetWindowOnExit(windowStart: guideLeftEdge(DateTime.now()));
-    // With the setting off nothing is awaited, so the built-in player still
-    // opens on this frame.
-    final external =
-        ExternalPlayerPolicy.isEnabled &&
-        await queueChannelForExternalPlayer(channels[index]);
-    if (!mounted) return;
-    await context.push(
-      external ? Destinations.externalPlayer : Destinations.liveTvPlayer,
-      extra: external ? null : {'channels': channels, 'startIndex': index},
-    );
-    if (!mounted) return;
-    await _vm.reloadIfStale(
-      window: _layoutProfile.guideWindow,
-      windowStart: guideLeftEdge(DateTime.now()),
-    );
-    if (!mounted) return;
-    _vm.scheduleBoundaryRefresh();
-    // The player may have switched channels (carousel) while it was up, so
-    // the preference it kept current names the channel to restore focus to,
-    // not the one this call originally launched.
-    final restoredChannels = _vm.filteredChannels;
-    var restoredIndex = restoredChannels.indexWhere(
-      (channel) => channel.id == _homeChannelId,
-    );
-    if (restoredIndex < 0) {
-      restoredIndex = restoredChannels.indexWhere(
-        (channel) => channel.id == channelId,
-      );
-    }
-    if (restoredIndex >= 0) _focusChannelRow(restoredIndex);
+    context.push(Destinations.liveTvPlayer, extra: {
+      'channels': channels,
+      'startIndex': index,
+      'startInGuide': preview,
+    });
   }
 
   void _showProgramDetails(GuideProgram program) {
-    _cancelPendingVerticalMove();
     final pageContext = context;
     final channel = _vm.channelForId(program.channelId);
     final isFavoriteChannel = channel?.isFavorite ?? false;
     final hasTimer = program.hasTimer;
     final hasSeriesTimer = program.hasSeriesTimer;
-    final now = DateTime.now();
-    // That airing is over. Only a future or currently-airing showing can still be recorded.
-    final isEnded = now.isAfter(program.endDate);
-    final isFuture = now.isBefore(program.startDate);
-    // Airing right now with a timer set: the recording is in progress, so
-    // cancelling it is the action the dialog was almost certainly opened for.
-    final isRecordingNow = hasTimer && !isEnded && !isFuture;
     final l10n = AppLocalizations.of(context);
     var dialogActionInProgress = false;
-    final defaultActionFocusNode = FocusNode(
-      debugLabel: 'GuideProgramDialogDefaultAction',
-    );
-    var defaultActionFocusRequested = false;
-    final episodeLine = program.episodeLine;
 
     showFocusRestoringDialog(
       context: context,
-      builder: (dialogContext) {
-        if (!defaultActionFocusRequested) {
-          defaultActionFocusRequested = true;
-          // On TV a navigator observer hands a freshly pushed route's first
-          // focusable the focus from a post-frame callback registered at push
-          // time, which lands after `autofocus` resolves. Re-assert from a
-          // later callback so the intended action keeps it.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (defaultActionFocusNode.context != null) {
-              defaultActionFocusNode.requestFocus();
-            }
-          });
-        }
-        return AlertDialog.adaptive(
-          backgroundColor: AppColorScheme.surface,
-          title: Text(
-            program.name,
-            style: const TextStyle(color: Colors.white),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${_formatTime(program.startDate)} – ${_formatTime(program.endDate)}',
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                if (episodeLine.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    episodeLine,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                ],
-                if (hasSeriesTimer && !hasTimer && !isEnded) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    l10n.seriesRecordingSkipsShowing,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ],
-                if (program.overview != null &&
-                    program.overview!.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    program.overview!,
-                    style: const TextStyle(color: Colors.white60, fontSize: 13),
-                  ),
-                ],
+      builder: (dialogContext) => AlertDialog.adaptive(
+        backgroundColor: AppColorScheme.surface,
+        title: Text(program.name, style: const TextStyle(color: Colors.white)),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${_formatTime(program.startDate)} – ${_formatTime(program.endDate)}',
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (program.episodeTitle != null) ...[
+                const SizedBox(height: 8),
+                Text(program.episodeTitle!, style: const TextStyle(color: Colors.white70)),
+              ],
+              if (program.overview != null && program.overview!.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    if (program.isMovie)
-                      Chip(
-                        label: Text(l10n.movie),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (program.isSeries)
-                      Chip(
-                        label: Text(l10n.series),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (program.isSports)
-                      Chip(
-                        label: Text(l10n.sports),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (program.isNews)
-                      Chip(
-                        label: Text(l10n.news),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (program.isKids)
-                      Chip(
-                        label: Text(l10n.kids),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    if (program.isPremiere)
-                      Chip(
-                        label: Text(l10n.premiere),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                  ],
+                Text(
+                  program.overview!,
+                  style: const TextStyle(color: Colors.white60, fontSize: 13),
                 ),
               ],
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  if (program.isMovie)
+                    Chip(label: Text(l10n.movie), visualDensity: VisualDensity.compact),
+                  if (program.isSeries)
+                    Chip(label: Text(l10n.series), visualDensity: VisualDensity.compact),
+                  if (program.isSports)
+                    Chip(label: Text(l10n.sports), visualDensity: VisualDensity.compact),
+                  if (program.isNews)
+                    Chip(label: Text(l10n.news), visualDensity: VisualDensity.compact),
+                  if (program.isKids)
+                    Chip(label: Text(l10n.kids), visualDensity: VisualDensity.compact),
+                  if (program.isPremiere)
+                    Chip(label: Text(l10n.premiere), visualDensity: VisualDensity.compact),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          adaptiveDialogAction(
+            onPressed: () async {
+              if (dialogActionInProgress) return;
+              dialogActionInProgress = true;
+              try {
+                await _vm.toggleProgramRecording(program);
+                if (!pageContext.mounted) return;
+                Navigator.of(dialogContext).pop();
+                ScaffoldMessenger.of(pageContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      hasTimer
+                          ? l10n.recordingCancelled
+                          : l10n.programSetToRecord,
+                    ),
+                  ),
+                );
+              } catch (_) {
+                    dialogActionInProgress = false;
+                if (!pageContext.mounted) return;
+                ScaffoldMessenger.of(pageContext).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      hasTimer
+                          ? l10n.failedToCancelRecording
+                          : l10n.unableToCreateRecording,
+                    ),
+                  ),
+                );
+              }
+            },
+            child: Text(hasTimer ? l10n.cancelRecordingAction : l10n.record),
+          ),
+          if (program.isSeries)
+            adaptiveDialogAction(
+              onPressed: () async {
+                if (dialogActionInProgress) return;
+                dialogActionInProgress = true;
+                try {
+                  await _vm.toggleSeriesRecording(program);
+                  if (!pageContext.mounted) return;
+                  Navigator.of(dialogContext).pop();
+                  ScaffoldMessenger.of(pageContext).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        hasSeriesTimer
+                            ? l10n.seriesRecordingCancelled
+                            : l10n.seriesSetToRecord,
+                      ),
+                    ),
+                  );
+                } catch (_) {
+                  dialogActionInProgress = false;
+                  if (!pageContext.mounted) return;
+                  ScaffoldMessenger.of(pageContext).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        hasSeriesTimer
+                            ? l10n.failedToCancelSeriesRecording
+                            : l10n.unableToCreateSeriesRecording,
+                      ),
+                    ),
+                  );
+                }
+              },
+              child: Text(
+                hasSeriesTimer
+                    ? l10n.cancelSeriesRecording
+                    : l10n.recordSeries,
+              ),
+            ),
+          adaptiveDialogAction(
+            onPressed: channel == null
+                ? null
+                : () async {
+                    if (dialogActionInProgress) return;
+                    dialogActionInProgress = true;
+                    try {
+                      await _vm.toggleChannelFavorite(program.channelId);
+                      if (!pageContext.mounted) return;
+                      Navigator.of(dialogContext).pop();
+                      ScaffoldMessenger.of(pageContext).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            isFavoriteChannel
+                                ? l10n.removedFromFavoriteChannels
+                                : l10n.addedToFavoriteChannels,
+                          ),
+                        ),
+                      );
+                    } catch (_) {
+                      dialogActionInProgress = false;
+                      if (!pageContext.mounted) return;
+                      ScaffoldMessenger.of(pageContext).showSnackBar(
+                        SnackBar(
+                          content: Text(l10n.failedToUpdateFavoriteChannel),
+                        ),
+                      );
+                    }
+                  },
+            child: Text(
+              isFavoriteChannel ? l10n.unfavoriteChannel : l10n.favoriteChannel,
             ),
           ),
-          actions: [
-            // That airing is over. Single-episode recording no longer applies.
-            if (!isEnded)
-              adaptiveDialogAction(
-                autofocus: isRecordingNow,
-                focusNode: isRecordingNow ? defaultActionFocusNode : null,
-                onPressed: () async {
-                  if (dialogActionInProgress) return;
-                  dialogActionInProgress = true;
-                  try {
-                    final String? message;
-                    if (hasTimer) {
-                      await _vm.toggleProgramRecording(program);
-                      message = l10n.recordingCancelled;
-                    } else {
-                      final outcome = await recordAiring(
-                        context: dialogContext,
-                        programId: program.id,
-                        programName: program.name,
-                        programStart: program.startDate,
-                        rawProgram: program.rawData,
-                        createTimer: () => _vm.toggleProgramRecording(program),
-                        stillValid: () => dialogContext.mounted,
-                        channel: channel == null
-                            ? null
-                            : recordPromptChannel(channel.number, channel.name),
-                      );
-                      // The guide refreshed before the future showing was
-                      // added, or not at all when only the future showing was
-                      // asked for, so refresh to show it.
-                      if (outcome ==
-                              RecordAiringOutcome.recordedWithLaterShowing ||
-                          outcome == RecordAiringOutcome.laterShowingOnly) {
-                        await _vm.recordingChanged();
-                      }
-                      message = recordAiringMessage(l10n, outcome);
-                    }
-                    if (message == null) {
-                      dialogActionInProgress = false;
-                      return;
-                    }
-                    if (!pageContext.mounted || !dialogContext.mounted) return;
-                    Navigator.of(dialogContext).pop();
-                    ScaffoldMessenger.of(
-                      pageContext,
-                    ).showSnackBar(SnackBar(content: Text(message)));
-                  } catch (_) {
-                    dialogActionInProgress = false;
-                    if (!pageContext.mounted) return;
-                    ScaffoldMessenger.of(pageContext).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          hasTimer
-                              ? l10n.failedToCancelRecording
-                              : l10n.unableToCreateRecording,
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: Text(
-                  hasTimer ? l10n.cancelRecordingAction : l10n.record,
-                ),
-              ),
-            if (hasSeriesTimer)
-              adaptiveDialogAction(
-                onPressed: () async {
-                  if (dialogActionInProgress) return;
-                  final seriesTimerId = program.rawData['SeriesTimerId']
-                      ?.toString();
-                  if (seriesTimerId == null || seriesTimerId.isEmpty) return;
-                  dialogActionInProgress = true;
-                  try {
-                    final changed = await changeSeriesRecordingEpisodes(
-                      context: dialogContext,
-                      liveTvApi: _vm.liveTvApi,
-                      seriesTimerId: seriesTimerId,
-                    );
-                    if (!changed) {
-                      dialogActionInProgress = false;
-                      return;
-                    }
-                    // Changing the rule already announced itself, so only
-                    // this guide's programs need reading again.
-                    await _vm.reloadIfRecordingsChanged();
-                    if (!pageContext.mounted || !dialogContext.mounted) return;
-                    Navigator.of(dialogContext).pop();
-                    ScaffoldMessenger.of(pageContext).showSnackBar(
-                      SnackBar(content: Text(l10n.seriesRecordingUpdated)),
-                    );
-                  } catch (_) {
-                    dialogActionInProgress = false;
-                    if (!pageContext.mounted) return;
-                    ScaffoldMessenger.of(pageContext).showSnackBar(
-                      SnackBar(
-                        content: Text(l10n.failedToUpdateSeriesRecording),
-                      ),
-                    );
-                  }
-                },
-                child: Text(l10n.seriesRecordingSettings),
-              ),
-            if (program.isSeries)
-              adaptiveDialogAction(
-                onPressed: () async {
-                  if (dialogActionInProgress) return;
-                  dialogActionInProgress = true;
-                  try {
-                    SeriesRecordingEpisodes? episodes;
-                    if (!hasSeriesTimer) {
-                      episodes = await showSeriesRecordingEpisodesDialog(
-                        context: dialogContext,
-                      );
-                      if (episodes == null) {
-                        dialogActionInProgress = false;
-                        return;
-                      }
-                    }
-                    await _vm.toggleSeriesRecording(
-                      program,
-                      episodes: episodes,
-                    );
-                    if (!pageContext.mounted || !dialogContext.mounted) return;
-                    Navigator.of(dialogContext).pop();
-                    ScaffoldMessenger.of(pageContext).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          hasSeriesTimer
-                              ? l10n.seriesRecordingCancelled
-                              : l10n.seriesSetToRecord,
-                        ),
-                      ),
-                    );
-                  } catch (e) {
-                    dialogActionInProgress = false;
-                    if (!pageContext.mounted) return;
-                    if (isPremiereError(e)) {
-                      await showPremiereRequiredDialog(pageContext);
-                      return;
-                    }
-                    ScaffoldMessenger.of(pageContext).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          hasSeriesTimer
-                              ? l10n.failedToCancelSeriesRecording
-                              : l10n.unableToCreateSeriesRecording,
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: Text(
-                  hasSeriesTimer
-                      ? l10n.cancelSeriesRecording
-                      : l10n.recordSeries,
-                ),
-              ),
-            adaptiveDialogAction(
-              onPressed: channel == null
-                  ? null
-                  : () async {
-                      if (dialogActionInProgress) return;
-                      dialogActionInProgress = true;
-                      try {
-                        await _vm.toggleChannelFavorite(program.channelId);
-                        if (!pageContext.mounted || !dialogContext.mounted) {
-                          return;
-                        }
-                        Navigator.of(dialogContext).pop();
-                        ScaffoldMessenger.of(pageContext).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              isFavoriteChannel
-                                  ? l10n.removedFromFavoriteChannels
-                                  : l10n.addedToFavoriteChannels,
-                            ),
-                          ),
-                        );
-                      } catch (_) {
-                        dialogActionInProgress = false;
-                        if (!pageContext.mounted) return;
-                        ScaffoldMessenger.of(pageContext).showSnackBar(
-                          SnackBar(
-                            content: Text(l10n.failedToUpdateFavoriteChannel),
-                          ),
-                        );
-                      }
-                    },
-              child: Text(
-                isFavoriteChannel
-                    ? l10n.unfavoriteChannel
-                    : l10n.favoriteChannel,
-              ),
-            ),
-            adaptiveDialogAction(
-              autofocus: !isRecordingNow,
-              focusNode: isRecordingNow ? null : defaultActionFocusNode,
-              onPressed: () {
-                if (dialogActionInProgress) return;
-                dialogActionInProgress = true;
-                Navigator.of(dialogContext).pop();
-                _watchChannel(program.channelId);
-              },
-              // A future or ended showing won't itself play. The label says so.
-              child: Text(
-                isEnded || isFuture ? l10n.watchChannelLive : l10n.watch,
-              ),
-            ),
-            adaptiveDialogAction(
-              onPressed: () {
-                if (dialogActionInProgress) return;
-                dialogActionInProgress = true;
-                Navigator.of(dialogContext).pop();
-              },
-              child: Text(l10n.close),
-            ),
-          ],
-        );
-      },
-    ).whenComplete(defaultActionFocusNode.dispose);
+          adaptiveDialogAction(
+            onPressed: () {
+              if (dialogActionInProgress) return;
+              dialogActionInProgress = true;
+              Navigator.of(dialogContext).pop();
+              _watchChannel(program.channelId);
+            },
+            child: Text(l10n.watch),
+          ),
+          adaptiveDialogAction(
+            onPressed: () {
+              if (dialogActionInProgress) return;
+              dialogActionInProgress = true;
+              Navigator.of(dialogContext).pop();
+            },
+            child: Text(l10n.close),
+          ),
+        ],
+      ),
+    );
   }
 }
 
-class _GuideGridView extends StatelessWidget {
+class _GuideGridView extends StatefulWidget {
   final List<GuideChannel> channels;
   final double guideWidth;
-  final double rowHeight;
   final ScrollController verticalController;
   final ScrollController horizontalController;
-  final Widget Function(String channelId, int rowIndex) buildProgramRow;
+  final Widget Function(List<GuideProgram>, int rowIndex) buildProgramRow;
+  final List<GuideProgram> Function(String channelId) programsForChannel;
+  final bool Function(String channelId) hasProgramsFor;
+  final Widget Function() buildPlaceholderRow;
 
   const _GuideGridView({
     required this.channels,
     required this.guideWidth,
-    required this.rowHeight,
     required this.verticalController,
     required this.horizontalController,
     required this.buildProgramRow,
+    required this.programsForChannel,
+    required this.hasProgramsFor,
+    required this.buildPlaceholderRow,
   });
 
+  @override
+  State<_GuideGridView> createState() => _GuideGridViewState();
+}
+
+class _GuideGridViewState extends State<_GuideGridView> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      controller: horizontalController,
+      controller: widget.horizontalController,
       child: SizedBox(
-        width: guideWidth,
+        width: widget.guideWidth,
         child: ListView.builder(
-          controller: verticalController,
-          itemCount: channels.length,
-          itemExtent: rowHeight,
+          controller: widget.verticalController,
+          itemCount: widget.channels.length,
+          itemExtent: _kRowHeight,
           itemBuilder: (context, index) {
-            // Always the real row. An unloaded channel's `loading` cell carries
-            // the loading treatment and stays focusable.
+            final channel = widget.channels[index];
+            final loaded = widget.hasProgramsFor(channel.id);
             return SizedBox(
-              key: ValueKey(channels[index].id),
-              width: guideWidth,
-              height: rowHeight,
-              child: buildProgramRow(channels[index].id, index),
+              width: widget.guideWidth,
+              height: _kRowHeight,
+              child: loaded
+                  ? widget.buildProgramRow(
+                      widget.programsForChannel(channel.id),
+                      index,
+                    )
+                  : widget.buildPlaceholderRow(),
             );
           },
         ),
@@ -2933,17 +1863,11 @@ class _GuidePillButton extends StatefulWidget {
   final String? label;
   final IconData? icon;
   final VoidCallback? onPressed;
-  final FocusNode? focusNode;
-  final FocusOnKeyEventCallback? onKeyEvent;
-  final bool compact;
 
   const _GuidePillButton({
     this.label,
     this.icon,
     this.onPressed,
-    this.focusNode,
-    this.onKeyEvent,
-    this.compact = false,
   });
 
   @override
@@ -2957,8 +1881,6 @@ class _GuidePillButtonState extends State<_GuidePillButton> {
   Widget build(BuildContext context) {
     final active = _focused;
     return _GuideFocusableSurface(
-      focusNode: widget.focusNode,
-      onKeyEvent: widget.onKeyEvent,
       onPressed: widget.onPressed,
       onFocusChange: (focused) {
         if (_focused != focused) setState(() => _focused = focused);
@@ -2966,9 +1888,7 @@ class _GuidePillButtonState extends State<_GuidePillButton> {
       borderRadius: AppRadius.circular(20),
       builder: (_) => AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: widget.compact
-            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 5)
-            : const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
           color: active
               ? AppColorScheme.accent.withValues(alpha: _focused ? 1.0 : 0.7)
@@ -2995,15 +1915,14 @@ class _GuidePillButtonState extends State<_GuidePillButton> {
     if (widget.icon != null) {
       return Icon(widget.icon, color: color, size: 18);
     }
-    return Text(
-      widget.label ?? '',
-      style: TextStyle(color: color, fontSize: 13),
-    );
+    return Text(widget.label ?? '', style: TextStyle(color: color, fontSize: 13));
   }
 }
 
 class _GuideFocusableSurface extends StatefulWidget {
   final VoidCallback? onPressed;
+  final VoidCallback? onPreview;
+  final VoidCallback? onContextMenu;
   final ValueChanged<bool>? onFocusChange;
   final Widget Function(bool focused) builder;
   final BorderRadiusGeometry? borderRadius;
@@ -3011,8 +1930,11 @@ class _GuideFocusableSurface extends StatefulWidget {
   final FocusOnKeyEventCallback? onKeyEvent;
 
   const _GuideFocusableSurface({
+    super.key,
     required this.builder,
     this.onPressed,
+    this.onPreview,
+    this.onContextMenu,
     this.onFocusChange,
     this.borderRadius,
     this.focusNode,
@@ -3024,19 +1946,29 @@ class _GuideFocusableSurface extends StatefulWidget {
 }
 
 class _GuideFocusableSurfaceState extends State<_GuideFocusableSurface> {
+  late final _selectGesture = GuideSelectGesture(
+    onSelect: () => widget.onPressed?.call(),
+    onHeld: () => widget.onContextMenu?.call(),
+  );
   FocusNode? _ownedFocusNode;
   bool _focused = false;
 
-  FocusNode get _focusNode =>
-      widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
+  FocusNode get _focusNode => widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
 
   @override
   void dispose() {
+    _selectGesture.dispose();
     _ownedFocusNode?.dispose();
     super.dispose();
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (widget.onContextMenu != null) {
+      final contextResult = handleGuideContextKey(event, widget.onContextMenu!);
+      if (contextResult != KeyEventResult.ignored) return contextResult;
+      final select = _selectGesture.handle(event);
+      if (select != KeyEventResult.ignored) return select;
+    }
     final override = widget.onKeyEvent?.call(node, event);
     if (override != null && override != KeyEventResult.ignored) {
       return override;
@@ -3052,11 +1984,15 @@ class _GuideFocusableSurfaceState extends State<_GuideFocusableSurface> {
     if (widget.borderRadius != null) {
       child = ClipRRect(borderRadius: widget.borderRadius!, child: child);
     }
+    if (widget.onPreview != null) {
+      child = MouseRegion(onEnter: (_) => widget.onPreview!(), child: child);
+    }
 
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: _handleKeyEvent,
       onFocusChange: (focused) {
+        if (!focused) _selectGesture.cancel();
         if (_focused != focused) {
           setState(() => _focused = focused);
         }
@@ -3065,6 +2001,8 @@ class _GuideFocusableSurfaceState extends State<_GuideFocusableSurface> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onPressed,
+        onLongPress: widget.onContextMenu ?? widget.onPreview,
+        onSecondaryTap: widget.onContextMenu,
         child: child,
       ),
     );
@@ -3072,66 +2010,32 @@ class _GuideFocusableSurfaceState extends State<_GuideFocusableSurface> {
 }
 
 class _GuideProgramRow extends StatefulWidget {
-  final List<GuideCell> cells;
+  final List<GuideProgram> programs;
   final int rowIndex;
-
-  /// The screen's registry of mounted rows. This row adds and removes itself.
-  final Map<int, _GuideProgramRowState> rowStates;
-
-  /// Null until the first cell takes focus.
-  final GuideSelection? selection;
-  final void Function(int fromRowIndex, int delta) onVerticalMove;
-
-  /// Pages whole channel rows. Like any vertical move it preserves the anchor.
-  final void Function(int fromRowIndex, int direction) onPageRows;
-
-  /// Fired before any arrow key is acted on, so a deferred move the user has
-  /// moved past can be dropped.
-  final VoidCallback onNavigationKey;
-
-  /// Fired when this row registers itself, so a move deferred on an unmounted
-  /// row can complete.
-  final VoidCallback onRowMounted;
   final DateTime windowStart;
   final DateTime windowEnd;
-  final double pixelsPerMinute;
-  final double rowHeight;
-  final ScrollController horizontalController;
   final bool apple;
   final VoidCallback? onLeftEdge;
-  final VoidCallback? onRightEdge;
   final VoidCallback? onTopEdge;
-  final ValueChanged<GuideCell> onProgramSelected;
-  final void Function(GuideCell cell, double left, double width)
+  final ValueChanged<int>? onVerticalMove;
+  final ValueChanged<GuideProgram> onProgramSelected;
+  final void Function(GuideProgram program, double left, double width, bool vertical)
   onProgramFocused;
-  final void Function(GuideCell cell, double left, double width)?
-  onHorizontalMove;
-
-  /// Label for a real schedule gap. A genre-filtered hole never shows it.
-  final String noProgramDataLabel;
+  final String Function(DateTime) formatTime;
 
   const _GuideProgramRow({
-    required this.cells,
+    super.key,
+    required this.programs,
     required this.rowIndex,
-    required this.rowStates,
-    required this.selection,
-    required this.onVerticalMove,
-    required this.onPageRows,
-    required this.onNavigationKey,
-    required this.onRowMounted,
     required this.windowStart,
     required this.windowEnd,
-    required this.pixelsPerMinute,
-    required this.rowHeight,
-    required this.horizontalController,
     required this.apple,
     this.onLeftEdge,
-    this.onRightEdge,
     this.onTopEdge,
+    this.onVerticalMove,
     required this.onProgramSelected,
     required this.onProgramFocused,
-    this.onHorizontalMove,
-    required this.noProgramDataLabel,
+    required this.formatTime,
   });
 
   @override
@@ -3140,119 +2044,60 @@ class _GuideProgramRow extends StatefulWidget {
 
 class _GuideProgramRowState extends State<_GuideProgramRow> {
   final List<FocusNode> _focusNodes = [];
+  bool _verticalEntry = false;
+
+  void focusAt(DateTime anchor) {
+    final index = widget.programs.indexWhere((program) =>
+      !anchor.isBefore(program.startDate) && anchor.isBefore(program.endDate));
+    if (index < 0 || index >= _focusNodes.length) return;
+    if (_focusNodes[index].context == null) return;
+    if (_focusNodes[index].hasFocus) return;
+    _verticalEntry = true;
+    _focusNodes[index].requestFocus();
+  }
 
   @override
   void initState() {
     super.initState();
     _syncFocusNodes();
-    widget.rowStates[widget.rowIndex] = this;
-    widget.onRowMounted();
   }
 
   @override
   void didUpdateWidget(covariant _GuideProgramRow oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final focused = _focusNodes.indexWhere((node) => node.hasFocus);
-    if (oldWidget.rowIndex != widget.rowIndex) {
-      if (widget.rowStates[oldWidget.rowIndex] == this) {
-        widget.rowStates.remove(oldWidget.rowIndex);
-      }
-      widget.rowStates[widget.rowIndex] = this;
-    }
-    if (oldWidget.cells.length != widget.cells.length) {
+    if (oldWidget.programs.length != widget.programs.length) {
       _syncFocusNodes();
     }
-    if (_cellsDiffer(oldWidget.cells, widget.cells)) {
-      _reresolveFocus(focused);
-    }
-  }
-
-  /// Re-binds focus to the selected program after a data change, so a
-  /// same-length refresh can't leave focus on a different show.
-  void _reresolveFocus(int focused) {
-    if (focused < 0) return;
-    final selection = widget.selection;
-    if (selection == null || widget.cells.isEmpty) return;
-
-    final programId = selection.programId;
-    var target = programId == null
-        ? -1
-        : widget.cells.indexWhere((cell) => cell.program?.id == programId);
-    if (target < 0) {
-      target = resolveCellIndexAt(widget.cells, selection.anchorTime);
-    }
-    if (target == focused) return;
-    _focusNodes[target].requestFocus();
-  }
-
-  static bool _cellsDiffer(List<GuideCell> a, List<GuideCell> b) {
-    if (a.length != b.length) return true;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i].start != b[i].start ||
-          a[i].end != b[i].end ||
-          a[i].program?.id != b[i].program?.id) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Focuses one of this row's cells on the screen's behalf. The nodes are
-  /// private to this state.
-  void focusCellAt(int index) {
-    if (index < 0 || index >= _focusNodes.length) return;
-    _focusNodes[index].requestFocus();
   }
 
   void _syncFocusNodes() {
-    while (_focusNodes.length < widget.cells.length) {
-      _focusNodes.add(
-        FocusNode(
-          debugLabel: 'GuideProgramRow${widget.rowIndex}:${_focusNodes.length}',
-        ),
-      );
+    while (_focusNodes.length < widget.programs.length) {
+      _focusNodes.add(FocusNode(debugLabel: 'GuideProgramRow${widget.rowIndex}:${_focusNodes.length}'));
     }
-    while (_focusNodes.length > widget.cells.length) {
+    while (_focusNodes.length > widget.programs.length) {
       _focusNodes.removeLast().dispose();
     }
   }
 
   @override
   void dispose() {
-    if (widget.rowStates[widget.rowIndex] == this) {
-      widget.rowStates.remove(widget.rowIndex);
-    }
     for (final node in _focusNodes) {
       node.dispose();
     }
     super.dispose();
   }
 
-  KeyEventResult _handleProgramKeyEvent(
-    int index,
-    FocusNode node,
-    KeyEvent event,
-  ) {
+  KeyEventResult _handleProgramKeyEvent(int index, FocusNode node, KeyEvent event) {
     final selected = handleOneShotSelect(event, () {
-      widget.onProgramSelected(widget.cells[index]);
+      widget.onProgramSelected(widget.programs[index]);
     });
     if (selected != KeyEventResult.ignored) return selected;
     if (!event.isActionable) return KeyEventResult.ignored;
 
     final key = event.logicalKey;
-    final pageDirection = key.pageDirection;
-    if (pageDirection != 0) {
-      widget.onNavigationKey();
-      widget.onPageRows(widget.rowIndex, pageDirection);
-      return KeyEventResult.handled;
-    }
-    if (key.isLeftKey || key.isRightKey || key.isUpKey || key.isDownKey) {
-      widget.onNavigationKey();
-    }
     if (key.isLeftKey) {
       if (index > 0) {
         _focusNodes[index - 1].requestFocus();
-        _notifyHorizontalMove(index - 1);
         return KeyEventResult.handled;
       }
       if (widget.onLeftEdge != null) {
@@ -3264,125 +2109,58 @@ class _GuideProgramRowState extends State<_GuideProgramRow> {
     if (key.isRightKey) {
       if (index < _focusNodes.length - 1) {
         _focusNodes[index + 1].requestFocus();
-        _notifyHorizontalMove(index + 1);
-        return KeyEventResult.handled;
-      }
-      if (widget.onRightEdge != null) {
-        widget.onRightEdge!();
         return KeyEventResult.handled;
       }
       return KeyEventResult.ignored;
     }
-    if (key.isUpKey) {
-      // The row-0 exit takes precedence over the vertical move.
-      if (widget.onTopEdge != null) {
-        widget.onTopEdge!();
-        return KeyEventResult.handled;
-      }
-      widget.onVerticalMove(widget.rowIndex, -1);
+    if (key.isUpKey && widget.onTopEdge != null) {
+      widget.onTopEdge!();
       return KeyEventResult.handled;
     }
-    if (key.isDownKey) {
-      // Consumed even when refused, so directional traversal can't pick a
-      // cell by geometry and drift the selection in time.
-      widget.onVerticalMove(widget.rowIndex, 1);
+    if ((key.isUpKey || key.isDownKey) && widget.onVerticalMove != null) {
+      widget.onVerticalMove!(key.isUpKey ? -1 : 1);
       return KeyEventResult.handled;
     }
 
     return KeyEventResult.ignored;
   }
 
-  void _notifyHorizontalMove(int index) {
-    final geometry = _cellGeometry(index);
-    widget.onHorizontalMove?.call(
-      widget.cells[index],
-      geometry.left,
-      geometry.width,
-    );
-  }
-
-  /// The single source of a cell's timeline geometry. `buildRowCells` already
-  /// clips every cell to the window, so no clamping is needed here.
-  ({double left, double width}) _cellGeometry(int index) {
-    final cell = widget.cells[index];
-    final startMinutes =
-        cell.start.difference(widget.windowStart).inMicroseconds /
-        Duration.microsecondsPerMinute;
-    final endMinutes =
-        cell.end.difference(widget.windowStart).inMicroseconds /
-        Duration.microsecondsPerMinute;
-    return (
-      left: startMinutes * widget.pixelsPerMinute,
-      width: (endMinutes - startMinutes) * widget.pixelsPerMinute,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final totalMinutes = widget.windowEnd.difference(widget.windowStart).inMinutes.toDouble();
     final now = DateTime.now();
 
     return Container(
       decoration: BoxDecoration(
-        border: Border(bottom: ThemeRegistry.active.borders.cardBorder),
+        border: Border(
+          bottom: ThemeRegistry.active.borders.cardBorder,
+        ),
       ),
       child: Stack(
         children: [
-          for (var index = 0; index < widget.cells.length; index++)
-            _buildProgramCell(index, widget.cells[index], now),
+          for (var index = 0; index < widget.programs.length; index++)
+            _buildProgramCell(index, widget.programs[index], totalMinutes, now),
         ],
       ),
     );
   }
 
-  Widget _buildProgramCell(int index, GuideCell cell, DateTime now) {
-    final geometry = _cellGeometry(index);
-    final left = geometry.left;
-    final width = geometry.width;
+  Widget _buildProgramCell(
+    int index,
+    GuideProgram program,
+    double totalMinutes,
+    DateTime now,
+  ) {
+    final offsetMinutes = program.startDate.difference(widget.windowStart).inMinutes.toDouble();
+    final clampedStart = offsetMinutes < 0 ? 0.0 : offsetMinutes;
+    final endOffset = program.endDate.difference(widget.windowStart).inMinutes.toDouble();
+    final clampedEnd = endOffset > totalMinutes ? totalMinutes : endOffset;
+    final left = clampedStart * _kPixelsPerMinute;
+    final width = (clampedEnd - clampedStart) * _kPixelsPerMinute;
 
     if (width <= 0) return const SizedBox.shrink();
 
-    final program = cell.program;
-    final isLive =
-        program != null &&
-        now.isAfter(program.startDate) &&
-        now.isBefore(program.endDate);
-
-    final cellWidget = _GuideFocusableSurface(
-      focusNode: _focusNodes[index],
-      onPressed: () => widget.onProgramSelected(cell),
-      onKeyEvent: (node, event) => _handleProgramKeyEvent(index, node, event),
-      onFocusChange: (focused) {
-        if (!focused) return;
-        widget.onProgramFocused(cell, left, width);
-      },
-      builder: (focused) => ListenableBuilder(
-        listenable: widget.horizontalController,
-        builder: (_, _) => EpgProgramCell(
-          title: program?.name ?? '',
-          episodeLine: program?.episodeLine,
-          // The geometry clips a cell to the window, so the program's own
-          // start is the only thing that says it began before the left edge.
-          startsBeforeWindow:
-              program != null && program.startDate.isBefore(widget.windowStart),
-          genre: program == null
-              ? EpgGenre('', AppColorScheme.onSurface.withValues(alpha: 0.18))
-              : epgGenreFor(program),
-          isLive: isLive,
-          isPast: program != null && program.endDate.isBefore(now),
-          progress: isLive ? program.progressAt(now) : 0,
-          hasTimer: program?.hasTimer ?? false,
-          hasSeriesTimer: program?.hasSeriesTimer ?? false,
-          focused: focused,
-          apple: widget.apple,
-          placeholderLabel: cell.kind == GuideCellKind.gap
-              ? widget.noProgramDataLabel
-              : null,
-          loading: cell.kind == GuideCellKind.loading,
-          failed: cell.kind == GuideCellKind.failed,
-          textLeftPadding: _textLeftPadding(left, width),
-        ),
-      ),
-    );
+    final isLive = now.isAfter(program.startDate) && now.isBefore(program.endDate);
 
     return Positioned(
       left: left,
@@ -3391,14 +2169,32 @@ class _GuideProgramRowState extends State<_GuideProgramRow> {
       bottom: 2,
       child: Padding(
         padding: const EdgeInsets.only(right: 1),
-        child: cellWidget,
+        child: _GuideFocusableSurface(
+          focusNode: _focusNodes[index],
+          onPressed: () => widget.onProgramSelected(program),
+          onKeyEvent: (node, event) =>
+              _handleProgramKeyEvent(index, node, event),
+          onFocusChange: (focused) {
+            if (!focused) return;
+            final vertical = _verticalEntry;
+            _verticalEntry = false;
+            widget.onProgramFocused(program, left, width, vertical);
+          },
+          builder: (focused) => EpgProgramCell(
+            title: program.name,
+            episodeLine: [
+              if (program.officialRating != null) program.officialRating!,
+              if (program.episodeLine.isNotEmpty) program.episodeLine,
+            ].join(' / '),
+            genre: epgGenreFor(program),
+            isLive: isLive,
+            progress: isLive ? program.progressAt(now) : 0,
+            hasTimer: program.hasTimer,
+            focused: focused,
+            apple: widget.apple,
+          ),
+        ),
       ),
     );
-  }
-
-  double _textLeftPadding(double left, double width) {
-    if (!widget.horizontalController.hasClients) return 0;
-    final maxInset = (width - 20).clamp(0.0, width);
-    return (widget.horizontalController.offset - left).clamp(0.0, maxInset);
   }
 }

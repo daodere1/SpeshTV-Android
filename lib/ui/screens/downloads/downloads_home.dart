@@ -470,14 +470,12 @@ class _DownloadsHomeState extends ConsumerState<DownloadsHome> {
   void _focusFirstRow() => _rowNodes[0].requestFocus();
 
   /// Pushes onto the panel's own navigator, which keeps the backdrop and hands
-  /// focus back to this row when the show screen pops. The show screen focuses
-  /// its first episode on TV, and off TV nothing should start out focused.
+  /// focus back to this row when the show screen pops.
   void _openShow(DownloadGroup group) {
     final seriesId = group.seriesId;
     if (seriesId == null) return;
     context.pushSettingsScreen(
       SavedShowScreen(seriesId: seriesId, title: group.title),
-      autofocus: false,
     );
   }
 

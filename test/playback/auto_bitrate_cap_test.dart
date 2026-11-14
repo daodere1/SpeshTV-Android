@@ -51,12 +51,9 @@ class _Backend extends Fake implements PlayerBackend {
 /// Direct plays when the ceiling it's sent lets the source through and
 /// transcodes when it doesn't, the way the server weighs the bitrate.
 class _BitrateResolver extends MediaStreamResolver {
-  _BitrateResolver(this.sourceBitrate, {this.codecTranscodes = false});
+  _BitrateResolver(this.sourceBitrate);
 
   final int sourceBitrate;
-
-  /// Transcodes whatever the ceiling, like a source the device can't decode.
-  final bool codecTranscodes;
   final List<int?> ceilings = <int?>[];
 
   @override
@@ -79,11 +76,10 @@ class _BitrateResolver extends MediaStreamResolver {
       streamUrl: 'https://example.test/stream',
       mediaSourceId: 'source-1',
       playSessionId: 'session-1',
-      playMethod: enableDirectPlay && fits && !codecTranscodes
+      playMethod: enableDirectPlay && fits
           ? StreamPlayMethod.directPlay
           : StreamPlayMethod.transcode,
       sourceBitrate: sourceBitrate,
-      liveStreamId: MediaStreamResolver.isLiveTvItem(mediaItem) ? 'live' : null,
     );
   }
 }
@@ -103,31 +99,20 @@ class _ItemWithSources {
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
-/// The ceilings each request carried, and how often the speed test was asked.
-Future<({List<int?> ceilings, int tests})> _play({
+Future<List<int?>> _ceilingsSent({
   required dynamic item,
   required int sourceBitrate,
   required int? measured,
-  int? saved,
   bool enableDirectPlay = true,
-  bool codecTranscodes = false,
 }) async {
-  final resolver = _BitrateResolver(
-    sourceBitrate,
-    codecTranscodes: codecTranscodes,
-  );
-  var tests = 0;
+  final resolver = _BitrateResolver(sourceBitrate);
   final manager = PlaybackManager()
     ..setBackend(_Backend())
     ..setResolver(resolver)
-    ..autoBitrateProvider = (() async {
-      tests++;
-      return measured;
-    })
-    ..savedAutoBitrateProvider = (() async => saved);
+    ..autoBitrateProvider = (() async => measured);
   await manager.playItems(<dynamic>[item], enableDirectPlay: enableDirectPlay);
   manager.dispose();
-  return (ceilings: resolver.ceilings, tests: tests);
+  return resolver.ceilings;
 }
 
 void main() {
@@ -137,120 +122,55 @@ void main() {
     test(
       'a source that outruns the measurement is sent its own bitrate',
       () async {
-        final played = await _play(
+        final ceilings = await _ceilingsSent(
           item: _ItemWithSources(15000000),
           sourceBitrate: 15000000,
           measured: 1500000,
-          saved: 1500000,
         );
 
-        expect(played.ceilings, [15000000]);
+        expect(ceilings, [15000000]);
       },
     );
 
     test('an item without its sources asks again once the server names the bitrate', () async {
-      final played = await _play(
+      final ceilings = await _ceilingsSent(
         item: queueEntry,
         sourceBitrate: 15000000,
         measured: 1500000,
-        saved: 1500000,
       );
 
-      expect(played.ceilings, [1500000, 15000000]);
+      expect(ceilings, [1500000, 15000000]);
     });
 
     test('a source under the measurement is sent the measurement', () async {
-      final played = await _play(
+      final ceilings = await _ceilingsSent(
         item: queueEntry,
         sourceBitrate: 1000000,
         measured: 1500000,
-        saved: 1500000,
       );
 
-      expect(played.ceilings, [1500000]);
-      expect(played.tests, 0);
+      expect(ceilings, [1500000]);
     });
 
     test('a transcode asked for outright is held to the measurement', () async {
-      final played = await _play(
+      final ceilings = await _ceilingsSent(
         item: _ItemWithSources(15000000),
         sourceBitrate: 15000000,
         measured: 1500000,
         enableDirectPlay: false,
       );
 
-      expect(played.ceilings, [1500000]);
-      expect(played.tests, 1);
-    });
-
-    test('a direct play with nothing saved never runs the test', () async {
-      final played = await _play(
-        item: _ItemWithSources(15000000),
-        sourceBitrate: 15000000,
-        measured: 1500000,
-      );
-
-      expect(played.ceilings, [null]);
-      expect(played.tests, 0);
-    });
-
-    test('a transcode with nothing saved runs the test and asks again', () async {
-      final played = await _play(
-        item: _ItemWithSources(1000000),
-        sourceBitrate: 1000000,
-        measured: 1500000,
-        codecTranscodes: true,
-      );
-
-      expect(played.ceilings, [null, 1500000]);
-      expect(played.tests, 1);
-    });
-
-    test('a transcode on a saved measurement that still holds asks once', () async {
-      final played = await _play(
-        item: _ItemWithSources(1000000),
-        sourceBitrate: 1000000,
-        measured: 1500000,
-        saved: 1500000,
-        codecTranscodes: true,
-      );
-
-      expect(played.ceilings, [1500000]);
-      expect(played.tests, 1);
-    });
-
-    test('a transcode on an outdated saved measurement asks with the new one', () async {
-      final played = await _play(
-        item: _ItemWithSources(1000000),
-        sourceBitrate: 1000000,
-        measured: 1500000,
-        saved: 8000000,
-        codecTranscodes: true,
-      );
-
-      expect(played.ceilings, [8000000, 1500000]);
-      expect(played.tests, 1);
-    });
-
-    test('a live channel is measured before its only request', () async {
-      final played = await _play(
-        item: const <String, dynamic>{'Id': 'channel', 'Type': 'TvChannel'},
-        sourceBitrate: 15000000,
-        measured: 1500000,
-      );
-
-      expect(played.ceilings, [1500000]);
-      expect(played.tests, 1);
+      expect(ceilings, [1500000]);
     });
 
     test('no measurement leaves the request uncapped', () async {
-      final played = await _play(
+      final ceilings = await _ceilingsSent(
         item: queueEntry,
         sourceBitrate: 15000000,
         measured: null,
       );
 
-      expect(played.ceilings, [null]);
+      expect(ceilings, [null]);
     });
   });
 

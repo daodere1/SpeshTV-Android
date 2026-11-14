@@ -62,23 +62,16 @@ void main() {
     expect(prefs.resolveDevicePerformanceTier(), DevicePerformanceTier.reduced);
   });
 
-  test('trailers are off until the user turns them on', () async {
-    PlatformDetection.setDeviceMemory(largeDevice);
-    final prefs = await _prefs();
-
-    expect(prefs.resolveMediaBarTrailerPreview(), isFalse);
-  });
-
   test('trailers stay on where the device can afford them', () async {
     PlatformDetection.setDeviceMemory(largeDevice);
-    final prefs = await _prefs({'mediaBarTrailerPreview': true});
+    final prefs = await _prefs();
 
     expect(prefs.resolveMediaBarTrailerPreview(), isTrue);
   });
 
   test('a held-back device keeps the still image', () async {
     PlatformDetection.setDeviceMemory(smallDevice);
-    final prefs = await _prefs({'mediaBarTrailerPreview': true});
+    final prefs = await _prefs();
 
     // The switch itself is untouched, so turning Performance back to Standard
     // restores trailers without the user hunting for a second setting.
@@ -90,7 +83,6 @@ void main() {
     PlatformDetection.setDeviceMemory(smallDevice);
     final prefs = await _prefs({
       'pref_performance_mode': DevicePerformanceMode.standard.name,
-      'mediaBarTrailerPreview': true,
     });
 
     expect(prefs.resolveMediaBarTrailerPreview(), isTrue);

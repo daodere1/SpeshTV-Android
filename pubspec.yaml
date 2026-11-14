@@ -1,9 +1,11 @@
 name: moonfin
-description: "Moonfin - Jellyfin & Emby media client for mobile, tablet, and desktop"
+description: "SpeshTV - Jellyfin & Emby media client, based on Moonfin"
 publish_to: 'none'
-version: 3.1.0+30000163
+version: 2.8.0+30000201
 
 moonfin:
+  android_tv_version: 2.8.0
+  android_tv_build_number: 2000068
   beta: false
   beta_number: 1
 
@@ -130,8 +132,6 @@ dependencies:
     path: packages/server_emby
   server_plex:
     path: packages/server_plex
-  server_silo:
-    path: packages/server_silo
   playback_core:
     path: packages/playback_core
   playback_jellyfin:
@@ -140,8 +140,6 @@ dependencies:
     path: packages/playback_emby
   playback_plex:
     path: packages/playback_plex
-  playback_silo:
-    path: packages/playback_silo
   moonfin_design:
     path: packages/design
   jellyfin_preference:
@@ -188,7 +186,6 @@ dependencies:
   sqflite_tvos: any
   firebase_core: ^4.11.0
   firebase_messaging: ^16.4.1
-  firebase_app_installations: ^0.4.5
   pointer_interceptor: ^0.10.1+2
   flutter_markdown_plus: ^1.0.12
   markdown: ^7.3.1
@@ -216,6 +213,12 @@ dev_dependencies:
   plugin_platform_interface: ^2.1.8
 
 dependency_overrides:
+  # Respect the Kotlin compatibility opt-out when using AGP 9.
+  file_picker:
+    path: packages/file_picker
+  # Upstream 1.1.3 requests a ProGuard default removed by AGP 9.
+  flutter_inappwebview_android:
+    path: packages/flutter_inappwebview_android
   # objective_c 9.3.0's build hook imports a private path out of
   # native_toolchain_c, which stopped compiling on the Flutter 3.47 SDK and takes
   # `flutter test` down with it. 9.4.1 drops that import.
@@ -268,10 +271,7 @@ dependency_overrides:
   # unreleased upstream work on the Apple and Dart sides. Re-check those builds
   # when moving the ref, and drop this once the fix reaches a published version.
   media_kit_video:
-    git:
-      url: https://github.com/RadicalMuffinMan/media-kit.git
-      path: media_kit_video
-      ref: 50013aee7429633ae2df656982167ca6d21237ce
+    path: packages/media_kit_video
   synchronized: 3.3.1
   wakelock_plus: 1.3.3
   screen_brightness_android: 2.1.3
@@ -287,20 +287,18 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/themes/
     # Bundled so AppBeta can read the beta flag back at runtime, which keeps
     # pubspec the one place the beta number is written.
     - pubspec.yaml
     - assets/images/
     - assets/icons/
     - assets/icons/ratings/
-    # Country flags for poster labels, from flag-icons (MIT, see the LICENSE beside them).
-    - assets/icons/flags/
     - assets/icons/social/
     - assets/fonts/
     - assets/subtitle_fonts/
     - assets/licenses/cores/
     - assets/reader/
-    - assets/after_hours/
 
   fonts:
     # The web engine fetches Roboto from fonts.gstatic.com unless it finds a
@@ -334,19 +332,16 @@ flutter:
         - asset: assets/fonts/Literata-Regular.ttf
         - asset: assets/fonts/Literata-SemiBold.ttf
           weight: 600
-    # The After Hours arcade's display face.
-    - family: Jersey10
-      fonts:
-        - asset: assets/fonts/Jersey10-Regular.ttf
 
 # The identity has to match Partner Center's Product identity page or the Store
 # rejects the upload.
 msix_config:
-  display_name: Moonfin
-  publisher_display_name: Moonfin
-  identity_name: Moonfin.Moonfin
-  publisher: CN=4E670673-D47F-4792-94F7-65B4918F6E4C
+  display_name: SpeshTV
+  publisher_display_name: SpeshCaster
+  identity_name: SpeshCaster.SpeshTV
+  publisher: CN=28D726F4-131C-4CAE-AC94-E02C2A5DFBBB
+  msix_version: 2.8.0.0
   logo_path: assets/icons/app_icon.png
   capabilities: internetClient, internetClientServer, privateNetworkClientServer
   languages: en-us
-  protocol_activation: moonfin
+  protocol_activation: speshtv

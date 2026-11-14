@@ -128,9 +128,9 @@ class YouTubeStreamResolver {
 
   /// Resolves a YouTube video ID to a streamable URL.
   /// Returns null if resolution fails or times out.
-  static Future<YouTubeStream?> resolve(String videoId) async {
+  static Future<YouTubeStream?> resolve(String videoId, {int? maxHeight}) async {
     try {
-      return await _tryInnertube(videoId)
+      return await _tryInnertube(videoId, maxHeight: maxHeight)
           .timeout(_resolveTimeout, onTimeout: () => null);
     } catch (_) {
       return null;
@@ -141,12 +141,12 @@ class YouTubeStreamResolver {
   ///
   /// For YouTube URLs this resolves to a stream URL.
   /// For non-YouTube URLs this returns the original URL.
-  static Future<YouTubeStream?> resolveFromUrl(String trailerUrl) async {
+  static Future<YouTubeStream?> resolveFromUrl(String trailerUrl, {int? maxHeight}) async {
     final videoId = extractVideoId(trailerUrl);
     if (videoId == null) {
       return YouTubeStream(trailerUrl);
     }
-    return resolve(videoId);
+    return resolve(videoId, maxHeight: maxHeight);
   }
 
   static final _searches = <String, Future<String?>>{};
@@ -460,7 +460,7 @@ class YouTubeStreamResolver {
     } catch (_) {}
   }
 
-  static Future<YouTubeStream?> _tryInnertube(String videoId) async {
+  static Future<YouTubeStream?> _tryInnertube(String videoId, {int? maxHeight}) async {
     const clients = [
       _visionOs,
       _InnertubeClient(
@@ -486,7 +486,7 @@ class YouTubeStreamResolver {
         final data = await _requestPlayerWithVisitor(videoId, client);
         if (data == null) continue;
 
-        final url = extractInnertubeStreamUrl(data);
+        final url = extractInnertubeStreamUrl(data, maxHeight: maxHeight);
         if (url != null) {
           return YouTubeStream(url, audioLanguage: originalAudioLanguage(data));
         }
@@ -626,7 +626,7 @@ class YouTubeStreamResolver {
   }
 
   @visibleForTesting
-  static String? extractInnertubeStreamUrl(Map<String, dynamic> playerResponse) {
+  static String? extractInnertubeStreamUrl(Map<String, dynamic> playerResponse, {int? maxHeight}) {
     final playability = playerResponse['playabilityStatus'] as Map<String, dynamic>?;
     final status = playability?['status'] as String?;
     if (status != null && status != 'OK') {
@@ -637,12 +637,12 @@ class YouTubeStreamResolver {
     if (streamingData == null) return null;
 
     final hlsUrl = streamingData['hlsManifestUrl'] as String?;
-    if (hlsUrl != null && hlsUrl.isNotEmpty) {
+    if (maxHeight == null && hlsUrl != null && hlsUrl.isNotEmpty) {
       return hlsUrl;
     }
 
     final dashUrl = streamingData['dashManifestUrl'] as String?;
-    if (dashUrl != null && dashUrl.isNotEmpty) {
+    if (maxHeight == null && dashUrl != null && dashUrl.isNotEmpty) {
       return dashUrl;
     }
 
@@ -654,13 +654,13 @@ class YouTubeStreamResolver {
             .toList() ??
         const <Map<String, dynamic>>[];
     if (formats.isNotEmpty) {
-      return _pickBestUrl(formats);
+      return pickStreamUrl(formats, maxHeight: maxHeight);
     }
 
     return null;
   }
 
-  static String? _pickBestUrl(List<Map<String, dynamic>> streams) {
+  static String? pickStreamUrl(List<Map<String, dynamic>> streams, {int? maxHeight}) {
     if (streams.isEmpty) return null;
 
     String? bestUrl;
@@ -669,6 +669,12 @@ class YouTubeStreamResolver {
     for (final s in streams) {
       final url = s['url'] as String?;
       if (url == null) continue;
+      if (maxHeight != null) {
+        final height = _qualityFromStream(s);
+        final mime = (s['mimeType'] as String? ?? s['type'] as String? ?? '').toLowerCase();
+        if (height <= 0 || height > maxHeight || !_streamHasAudio(s) ||
+            !(mime.contains('video/mp4') || s['container'] == 'mp4')) continue;
+      }
 
       final score = _streamScore(s);
       if (score > bestScore) {
@@ -677,16 +683,17 @@ class YouTubeStreamResolver {
       }
     }
 
-    return bestUrl ?? (streams.first['url'] as String?);
+    return bestUrl;
   }
 
   static int _streamScore(Map<String, dynamic> stream) {
-    final mime = (stream['mimeType'] as String? ?? '').toLowerCase();
+    final mime = (stream['mimeType'] as String? ?? stream['type'] as String? ?? '').toLowerCase();
     final quality = _qualityFromStream(stream);
 
     var score = 0;
 
-    if (mime.contains('video/mp4')) score += 2500;
+    if (_streamHasAudio(stream)) score += 5000;
+    if (mime.contains('video/mp4') || stream['container'] == 'mp4') score += 2500;
     if (mime.contains('avc1')) score += 2500;
 
     if (mime.contains('vp9') || mime.contains('vp09')) score -= 1500;
@@ -700,13 +707,15 @@ class YouTubeStreamResolver {
   }
 
   static int _qualityFromStream(Map<String, dynamic> stream) {
-    final label = stream['qualityLabel'] as String? ?? '';
+    final height = stream['height'];
+    if (height is num && height > 0) return height.toInt();
+    final label = stream['qualityLabel'] as String? ?? stream['quality'] as String? ?? '';
     return int.tryParse(label.split(RegExp(r'[p@]')).first.trim()) ?? 0;
   }
 
   static bool _streamHasAudio(Map<String, dynamic> stream) {
-    final mime = (stream['mimeType'] as String? ?? '').toLowerCase();
-    return mime.contains('mp4a') ||
+    final mime = (stream['mimeType'] as String? ?? stream['type'] as String? ?? '').toLowerCase();
+    return stream['videoOnly'] == false || (stream['audioCodec'] as String? ?? '').isNotEmpty || mime.contains('mp4a') ||
         mime.contains('opus') ||
         mime.contains('vorbis') ||
         mime.contains('audio');

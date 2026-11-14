@@ -26,7 +26,7 @@ Color get _navyBackground => AppColorScheme.background;
 const _horizontalPadding = 60.0;
 const _mobileHorizontalPadding = 16.0;
 const _kCompactBreakpoint = 600.0;
-const _initialArtworkBatch = 12;
+const _initialArtworkBatch = 4;
 const _backgroundArtworkConcurrency = 4;
 
 bool _isCompact(BuildContext context) =>
@@ -115,10 +115,11 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
         sortBy: 'SortName',
         sortOrder: 'Ascending',
         recursive: true,
-        fields: 'ItemCounts,PrimaryImageTag,ImageTags,BackdropImageTags,PrimaryImageAspectRatio',
+        fields: 'ItemCounts,PrimaryImageAspectRatio',
       );
 
       final items = (response['Items'] as List?) ?? [];
+      // Resolve zero-count tiles against their items before dropping them.
       final temp = items.map((g) {
         final data = g as Map<String, dynamic>;
         final count = data['ChildCount'] as int? ??
@@ -132,9 +133,6 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
           data: data,
           itemCount: count,
         );
-      }).where((genre) {
-        if (_collectionType == 'music') return true;
-        return genre.itemCount > 0 || !genreReportsCounts(genre.data);
       }).toList();
 
       _genres = temp.map((x) {
@@ -277,9 +275,7 @@ class _LibraryGenresScreenState extends State<LibraryGenresScreen> {
       );
       final items = (response['Items'] as List?) ?? [];
 
-      final rawTotalCount = response['TotalRecordCount'];
-      final totalCount =
-          rawTotalCount is num ? rawTotalCount.toInt() : items.length;
+      final totalCount = genrePageCount(response);
       if (totalCount <= 0 || items.isEmpty) {
         if (_genres.remove(genre) && !_disposed && mounted) {
           setState(() {});

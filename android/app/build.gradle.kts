@@ -1,16 +1,33 @@
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+fun loadAndroidTvVersionCode(rootDir: File, fallback: Int): Int {
+    val pubspec = rootDir.resolve("../pubspec.yaml")
+    if (!pubspec.exists()) return fallback
+
+    val line = pubspec.readLines().firstOrNull {
+        it.trimStart().startsWith("android_tv_build_number:")
+    } ?: return fallback
+
+    val rawValue = line.substringAfter(":", "").trim()
+    return rawValue.toIntOrNull() ?: fallback
+}
+
+fun loadAndroidTvVersionName(rootDir: File, fallback: String): String {
+    val pubspec = rootDir.resolve("../pubspec.yaml")
+    if (!pubspec.exists()) return fallback
+
+    val line = pubspec.readLines().firstOrNull {
+        it.trimStart().startsWith("android_tv_version:")
+    } ?: return fallback
+
+    val rawValue = line.substringAfter(":", "").trim()
+    return rawValue.ifEmpty { fallback }
+}
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
-    // Applied only for a normal build. google-services.json lists clients for
-    // the real application ids, so a test build under MOONFIN_TEST_ID_SUFFIX
-    // (see productFlavors) would fail with "No matching client found". Skipping
-    // it there is safe because the initializeApp call is try/caught, so a test
-    // build just runs without push.
-    id("com.google.gms.google-services")
-        .apply(System.getenv("MOONFIN_TEST_ID_SUFFIX").isNullOrEmpty())
     // END: FlutterFire Configuration
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -26,13 +43,23 @@ val keystoreStoreType = keystoreProperties
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
 
-val hasReleaseKeystore = rootProject.file("app/release.keystore").exists() &&
-    (keystoreProperties.getProperty("keyAlias")?.isNotBlank() == true)
+val speshCastStoreBuild = System.getenv("SPESHCAST_STORE_BUILD") == "true"
+val releaseStoreFile = if (speshCastStoreBuild) {
+    System.getenv("SPESHCAST_KEYSTORE")?.let { File(it) }
+} else rootProject.file("app/release.keystore")
+val releaseKeyAlias = if (speshCastStoreBuild) System.getenv("SPESHCAST_KEY_ALIAS")
+    else keystoreProperties.getProperty("keyAlias")
+val hasReleaseKeystore = releaseStoreFile?.exists() == true && !releaseKeyAlias.isNullOrBlank()
+if (speshCastStoreBuild && !hasReleaseKeystore) {
+    throw GradleException("SpeshCast store builds require a release upload keystore; debug signing is not permitted.")
+}
 
 android {
     namespace = "org.moonfin.androidtv"
     compileSdk = 36
     ndkVersion = "28.2.13676358"
+    val androidTvVersionCode = loadAndroidTvVersionCode(rootDir, flutter.versionCode)
+    val androidTvVersionName = loadAndroidTvVersionName(rootDir, flutter.versionName)
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
@@ -45,53 +72,68 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Fallback so the main manifest's ${enableImpeller} always resolves;
+        // TV flavors override this to "false".
+        manifestPlaceholders["enableImpeller"] = "true"
     }
 
     flavorDimensions += "device"
     productFlavors {
-        val baseAppId = "org.moonfin.androidtv"
-        val baseAppName = "Moonfin"
-        // Optional application-id suffix for on-device testing, set through the
-        // environment so an unset build is byte-identical to before:
-        //   MOONFIN_TEST_ID_SUFFIX=.hwtest flutter build apk --flavor mobile --debug
-        //
-        // Why this exists: a debug-signed test build cannot install over a
-        // release-signed build of the same flavor, and uninstalling to make room
-        // deletes that package's data directory - which holds the cartridge
-        // saves (SRAM/EEPROM). Those are stored locally and are NOT backed up to
-        // the server, so an uninstall can lose real game progress. A distinct id
-        // installs alongside instead and touches nothing.
+        val baseAppId = "dev.speshmedia.moonfin"
+        val baseAppName = if (speshCastStoreBuild) "SpeshCast" else "SpeshTV"
         val testIdSuffix = System.getenv("MOONFIN_TEST_ID_SUFFIX").orEmpty()
-        val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        // Phones, tablets and TVs share this package, and the app picks the TV
-        // UI and the renderer at runtime.
+        val mobileAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        val tvAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         create("mobile") {
             dimension = "device"
-            applicationId = baseAppId + testIdSuffix
+            applicationId = if (speshCastStoreBuild) "com.speshmedia.speshcast" else baseAppId
             versionCode = flutter.versionCode
             versionName = flutter.versionName
-            ndk { abiFilters += abis }
-            manifestPlaceholders["appName"] =
-                if (testIdSuffix.isEmpty()) baseAppName else "$baseAppName Test"
+            ndk { abiFilters += mobileAbis }
+            manifestPlaceholders["appName"] = baseAppName
         }
         create("mobile-beta") {
             dimension = "device"
             applicationId = "$baseAppId.beta"
             versionCode = flutter.versionCode
             versionName = flutter.versionName
-            ndk { abiFilters += abis }
+            ndk { abiFilters += mobileAbis }
             manifestPlaceholders["appName"] = "$baseAppName Beta"
+        }
+        create("androidTv") {
+            dimension = "device"
+            applicationId = if (speshCastStoreBuild) "com.speshmedia.speshcast.tv" else baseAppId + testIdSuffix
+            versionCode = androidTvVersionCode
+            versionName = androidTvVersionName
+            ndk { abiFilters += tvAbis }
+            manifestPlaceholders["appName"] =
+                if (testIdSuffix.isEmpty()) baseAppName else "$baseAppName Test"
+            // Impeller off by default on TV: the GLES fallback stutters on
+            // TV-box GPUs. MoonfinApplication turns it on for boxes where it
+            // runs on Vulkan.
+            manifestPlaceholders["enableImpeller"] = "false"
+        }
+        create("androidTv-beta") {
+            dimension = "device"
+            applicationId = "$baseAppId.beta"
+            versionCode = androidTvVersionCode
+            versionName = androidTvVersionName
+            ndk { abiFilters += tvAbis }
+            manifestPlaceholders["appName"] = "$baseAppName Beta"
+            manifestPlaceholders["enableImpeller"] = "false"
         }
     }
 
     signingConfigs {
         create("release") {
             if (hasReleaseKeystore) {
-                storeFile = file("release.keystore")
-                storeType = keystoreStoreType
-                storePassword = keystoreProperties["storePassword"] as String?
-                keyAlias = keystoreProperties["keyAlias"] as String?
-                keyPassword = keystoreProperties["keyPassword"] as String?
+                storeFile = releaseStoreFile
+                storeType = if (speshCastStoreBuild) "PKCS12" else keystoreStoreType
+                storePassword = if (speshCastStoreBuild) System.getenv("SPESHCAST_KEY_PASSWORD")
+                    else keystoreProperties["storePassword"] as String?
+                keyAlias = releaseKeyAlias
+                keyPassword = if (speshCastStoreBuild) System.getenv("SPESHCAST_KEY_PASSWORD")
+                    else keystoreProperties["keyPassword"] as String?
             }
         }
     }
@@ -150,12 +192,12 @@ dependencies {
 
 val flutterApkOutputDir = layout.buildDirectory.dir("app/outputs/flutter-apk")
 
-tasks.register<Copy>("copyMobileDebugApkForFlutter") {
-    from(flutterApkOutputDir.map { it.file("app-mobile-debug.apk") })
+tasks.register<Copy>("copyAndroidTvDebugApkForFlutter") {
+    from(flutterApkOutputDir.map { it.file("app-androidtv-debug.apk") })
     into(flutterApkOutputDir)
     rename { "app-debug.apk" }
 }
 
 tasks.matching { it.name == "assembleDebug" }.configureEach {
-    finalizedBy("copyMobileDebugApkForFlutter")
+    finalizedBy("copyAndroidTvDebugApkForFlutter")
 }

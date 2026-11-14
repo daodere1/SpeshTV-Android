@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:firebase_app_installations/firebase_app_installations.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
@@ -9,7 +8,6 @@ import 'package:server_core/server_core.dart';
 
 import '../../firebase_options.dart';
 import '../../ui/navigation/app_router.dart';
-import '../../ui/navigation/deep_link_navigator.dart';
 import '../../ui/widgets/server_messages_dialog.dart';
 import '../../util/platform_detection.dart';
 import 'plugin_sync_service.dart';
@@ -24,24 +22,21 @@ Future<void> pushBackgroundHandler(RemoteMessage message) async {}
 /// renders background/terminated notifications and this service only handles
 /// token registration and taps. Foreground messages are ignored because the
 /// SSE settings stream already shows the in-app notification.
-///
-/// Firebase stays untouched until a signed-in server's plugin can deliver
-/// push, so a phone that never meets one never contacts Google.
 class PushMessagingService {
-  Future<void>? _startFuture;
+  Future<void>? _initFuture;
   String? _lastRegisteredToken;
-  bool _listenerAttached = false;
 
   /// Set when a registration attempt was skipped or failed because the plugin
-  /// wasn't reachable or couldn't push yet, so the availability listener can
-  /// retry it.
+  /// was not reachable yet, so the availability listener can retry it.
   bool _pendingRegistration = false;
 
-  /// Repeated and concurrent callers share one start. A failed start clears
-  /// itself so a later call can retry.
-  Future<void> _start() => _startFuture ??= _doStart();
+  /// Repeated and concurrent callers share one initialization. A failed
+  /// initialization clears itself so a later call can retry.
+  Future<void> initialize() => _initFuture ??= _doInitialize();
 
-  Future<void> _doStart() async {
+  Future<void> _doInitialize() async {
+    if (!PlatformDetection.isMobile) return;
+
     try {
       await Firebase.initializeApp(
         options: PlatformDetection.isAndroid
@@ -49,16 +44,18 @@ class PushMessagingService {
             : DefaultFirebaseOptions.currentPlatform,
       );
     } on FirebaseException catch (e) {
-      // A duplicate-app error means Firebase was already initialized, which is
-      // fine. Anything else stops push setup.
+      // A duplicate-app error means Firebase was already initialized earlier in
+      // startup, which is fine; anything else aborts push setup.
       if (e.code != 'duplicate-app') {
-        _startFuture = null;
+        _initFuture = null;
         return;
       }
     } catch (_) {
-      _startFuture = null;
+      _initFuture = null;
       return;
     }
+
+    _attachAvailabilityListener();
 
     final messaging = FirebaseMessaging.instance;
 
@@ -77,6 +74,16 @@ class PushMessagingService {
       } catch (e) {
         debugPrint('PushMessagingService: getAPNSToken failed: $e');
       }
+    }
+
+    try {
+      final token = await messaging.getToken();
+      if (token == null) {
+        debugPrint('PushMessagingService: getToken returned null');
+      }
+      await _registerToken(token);
+    } catch (e) {
+      debugPrint('PushMessagingService: getToken failed: $e');
     }
 
     messaging.onTokenRefresh.listen((token) {
@@ -99,49 +106,31 @@ class PushMessagingService {
     } catch (_) {}
   }
 
-  /// Registers the current FCM token after login, starting Firebase first if
-  /// the plugin can deliver push. Otherwise it waits for the availability
-  /// listener, which retries once a server can.
+  /// Re-registers the current FCM token after login. Waits for initialization
+  /// instead of bailing: on a cold start with session restore this is reached
+  /// before the deferred [initialize] call has run.
   Future<void> registerWithCurrentToken() async {
     if (!PlatformDetection.isMobile) return;
-    _attachAvailabilityListener();
-    final sync = GetIt.instance.isRegistered<PluginSyncService>()
-        ? GetIt.instance<PluginSyncService>()
-        : null;
-    if (sync == null || !sync.pushSupported) {
-      _pendingRegistration = true;
-      return;
-    }
     try {
-      await _start();
-      // Someone who turned notifications down never gets a token from Google.
-      final settings =
-          await FirebaseMessaging.instance.getNotificationSettings();
-      if (settings.authorizationStatus == AuthorizationStatus.denied) return;
+      await initialize();
       // A server switch reuses the same FCM token, so drop the dedupe and let
       // the new server get its own registration.
       _lastRegisteredToken = null;
       final token = await FirebaseMessaging.instance.getToken();
-      if (token == null) {
-        debugPrint('PushMessagingService: getToken returned null');
-      }
       await _registerToken(token);
-    } catch (e) {
-      debugPrint('PushMessagingService: register failed: $e');
+    } catch (_) {
       _pendingRegistration = true;
     }
   }
 
-  /// Retries enrollment once the plugin can deliver push, covering
+  /// Retries enrollment once the Moonfin plugin becomes reachable, covering
   /// registrations that were skipped while its availability check was still
   /// in flight.
   void _attachAvailabilityListener() {
-    if (_listenerAttached) return;
     if (!GetIt.instance.isRegistered<PluginSyncService>()) return;
-    _listenerAttached = true;
     final sync = GetIt.instance<PluginSyncService>();
     sync.addListener(() {
-      if (sync.pushSupported && _pendingRegistration) {
+      if (sync.pluginAvailable && _pendingRegistration) {
         _pendingRegistration = false;
         unawaited(registerWithCurrentToken());
       }
@@ -188,34 +177,22 @@ class PushMessagingService {
     _lastRegisteredToken = token;
   }
 
-  /// Unregister this device with the plugin, e.g. on logout. With
-  /// [deleteToken] the FCM token and the Firebase installation ID go too, so
-  /// it's only passed when no other signed-in server still sends to it.
-  Future<void> unregister({bool deleteToken = false}) async {
+  /// Unregister this device with the plugin, e.g. on logout. No-op off mobile
+  /// or when there is no active client.
+  Future<void> unregister() async {
     if (!PlatformDetection.isMobile) return;
 
     final client = GetIt.instance.isRegistered<MediaServerClient>()
         ? GetIt.instance<MediaServerClient>()
         : null;
-    if (client != null && GetIt.instance.isRegistered<PluginSyncService>()) {
-      await GetIt.instance<PluginSyncService>().unregisterPushDevice(
-        client,
-        deviceId: _deviceId(_lastRegisteredToken),
-      );
-    }
-    _lastRegisteredToken = null;
+    if (client == null) return;
+    if (!GetIt.instance.isRegistered<PluginSyncService>()) return;
 
-    final started = _startFuture;
-    if (deleteToken && started != null) {
-      try {
-        await started;
-        await FirebaseMessaging.instance.deleteToken();
-        // Firebase keeps the installation ID until the app deletes it.
-        await FirebaseInstallations.instance.delete();
-      } catch (e) {
-        debugPrint('PushMessagingService: Firebase cleanup failed: $e');
-      }
-    }
+    await GetIt.instance<PluginSyncService>().unregisterPushDevice(
+      client,
+      deviceId: _deviceId(_lastRegisteredToken),
+    );
+    _lastRegisteredToken = null;
   }
 
   /// Reuses the app's Jellyfin device id so the plugin can tie the push
@@ -243,6 +220,6 @@ class PushMessagingService {
       return;
     }
 
-    unawaited(openLinkedRoute(appRouter, trimmed));
+    appRouter.go(trimmed);
   }
 }

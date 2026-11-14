@@ -34,12 +34,7 @@ enum HomeSectionPluginSource {
   custom('custom'),
 
   /// A slider an admin set up on Seerr's discover page.
-  seerr('seerr'),
-
-  /// A row the media server curates itself (Silo's home sections), through
-  /// `ServerHomeSectionsApi`. The row's id on the server goes in
-  /// `pluginSection`.
-  server('server');
+  seerr('seerr');
 
   const HomeSectionPluginSource(this.serializedName);
   final String serializedName;
@@ -400,11 +395,6 @@ class HomeSectionConfig {
       type: HomeSectionType.onNow,
       enabled: false,
       order: 47,
-    ),
-    HomeSectionConfig(
-      type: HomeSectionType.mdblistWatchingNow,
-      enabled: false,
-      order: 48,
     ),
   ];
 

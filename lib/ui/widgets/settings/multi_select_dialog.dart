@@ -60,14 +60,7 @@ Future<Set<String>?> showMultiSelectDialog({
               return withCleanSettingsTypography(
                 builderContext,
                 AlertDialog.adaptive(
-                  backgroundColor: settingsPickerBackground(builderContext),
-                  title: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+                  title: Text(title),
                   content: SizedBox(
                     width: double.maxFinite,
                     child: Column(
@@ -119,7 +112,6 @@ Future<Set<String>?> showMultiSelectDialog({
                                 final ticked = working.contains(e.key);
                                 final locked = full && !ticked;
                                 return TvFocusHighlight(
-                                  quiet: true,
                                   builder: (ctx, focused) => CheckboxListTile(
                                     autofocus: i == 0,
                                     dense: true,

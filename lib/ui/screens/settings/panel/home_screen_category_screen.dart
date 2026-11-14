@@ -32,10 +32,8 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
   Future<void> _checkServices() async {
     try {
       final repo = GetIt.instance<SeerrRepository>();
-      // Seerr only lets admins read settings/*, while the calendars work for
-      // every user, so ask the service list any signed in user can read.
-      final radarr = await repo.getRadarrServers();
-      final sonarr = await repo.getSonarrServers();
+      final radarr = await repo.getRadarrSettings();
+      final sonarr = await repo.getSonarrSettings();
       if (mounted) {
         setState(() {
           _radarrInstalled = radarr.isNotEmpty;
@@ -174,7 +172,6 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
       switch (style) {
         HomeRowsStyle.v1 => l10n.homeRowsStyleClassic,
         HomeRowsStyle.v2 => l10n.homeRowsStyleModern,
-        HomeRowsStyle.carousel => l10n.homeRowsStyleCarousel,
       };
 
   void _reloadHomeRows() {
@@ -251,7 +248,7 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                   setState(() {});
                 },
               ),
-              if (rowsStyle.usesModernCards)
+              if (rowsStyle == HomeRowsStyle.v2)
                 SwitchPreferenceTile(
                   preference: UserPreferences.modernCardsOnMyMediaRow,
                   title: l10n.modernCardsOnMyMediaRow,
@@ -264,7 +261,7 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                     setState(() {});
                   },
                 ),
-              if (rowsStyle.usesModernCards && !isMobileUi) ...[
+              if (rowsStyle == HomeRowsStyle.v2 && !isMobileUi) ...[
                 EnumPreferenceTile<ModernCardTransitionSpeed>(
                   preference: UserPreferences.modernCardTransitionSpeed,
                   title: l10n.modernCardsTransitionSpeed,
@@ -288,15 +285,15 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                 ),
               ],
               SliderPreferenceTile(
-                preference: rowsStyle.usesModernCards
+                preference: rowsStyle == HomeRowsStyle.v2
                     ? UserPreferences.modernHomeRowsPadding
                     : UserPreferences.classicHomeRowsPadding,
                 title: l10n.homeRowsPadding,
                 description: l10n.homeRowsPaddingDescription,
                 icon: Icons.unfold_more,
-                min: rowsStyle.usesModernCards ? 360 : 10,
-                max: rowsStyle.usesModernCards ? 560 : 130,
-                divisions: rowsStyle.usesModernCards ? 10 : 6,
+                min: rowsStyle == HomeRowsStyle.v2 ? 360 : 10,
+                max: rowsStyle == HomeRowsStyle.v2 ? 560 : 130,
+                divisions: rowsStyle == HomeRowsStyle.v2 ? 10 : 6,
                 enabled: isPaddingEnabled,
                 onChangeEnd: _pushPersonalizationSync,
               ),
@@ -382,20 +379,6 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                 icon: Icons.description_outlined,
                 onChanged: _pushPersonalizationSync,
               ),
-              SwitchPreferenceTile(
-                preference: UserPreferences.hideHomeWatchProgress,
-                title: l10n.hideHomeWatchProgress,
-                subtitle: l10n.hideHomeWatchProgressSubtitle,
-                icon: Icons.linear_scale,
-                onChanged: _pushPersonalizationSync,
-              ),
-              SwitchPreferenceTile(
-                preference: UserPreferences.hideHomeUnwatchedCount,
-                title: l10n.hideHomeUnwatchedCount,
-                subtitle: l10n.hideHomeUnwatchedCountSubtitle,
-                icon: Icons.filter_9_plus_outlined,
-                onChanged: _pushPersonalizationSync,
-              ),
               StringPickerPreferenceTile(
                 preference: UserPreferences.mediaPreviewMode,
                 title: l10n.mediaPreview,
@@ -447,7 +430,9 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                 _TvSettingsListTile(
                   leading: const Icon(Icons.movie_outlined),
                   title: const Text('IMDb Lists'),
-                  subtitle: const Text('Sort the IMDb chart rows.'),
+                  subtitle: const Text(
+                    'Configure IMDb Top 250, Popular, and other charts.',
+                  ),
                   onTap: () =>
                       context.pushSettingsScreen(const _ImdbListsScreen()),
                 ),
@@ -456,7 +441,7 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                   title: const Text('TMDB Lists'),
                   subtitle: Text(
                     tmdbAvailable
-                        ? 'Sort the TMDB chart rows.'
+                        ? 'Configure Popular, Top Rated, and Trending TMDB lists.'
                         : 'TMDB API key must be configured in Moonbase settings to use this feature.',
                   ),
                   onTap: tmdbAvailable
@@ -466,15 +451,17 @@ class _HomeScreenCategoryScreenState extends State<_HomeScreenCategoryScreen> {
                 _TvSettingsListTile(
                   leading: const Icon(Icons.celebration_outlined),
                   title: Text(l10n.seasonalRow),
-                  subtitle: Text(seerrBrand(l10n.seasonalRowDescription)),
+                  subtitle: Text(l10n.seasonalRowDescription),
                   onTap: () =>
                       context.pushSettingsScreen(const _SeasonalRowScreen()),
                 ),
                 if (showUpcomingCalendars)
                   _TvSettingsListTile(
                     leading: const Icon(Icons.calendar_month),
-                    title: Text(l10n.upcomingCalendars),
-                    subtitle: Text(l10n.upcomingCalendarsDescription),
+                    title: const Text('Upcoming Calendars'),
+                    subtitle: const Text(
+                      'Toggle Upcoming Calendars from Radarr/Sonarr.',
+                    ),
                     onTap: () => context.pushSettingsScreen(
                       const _UpcomingCalendarsScreen(),
                     ),

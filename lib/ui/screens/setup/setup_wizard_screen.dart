@@ -8,8 +8,6 @@ import 'package:go_router/go_router.dart';
 import 'package:moonfin_design/moonfin_design.dart';
 import 'package:server_core/server_core.dart';
 
-import '../../../auth/repositories/user_repository.dart';
-import '../../../data/services/plugin_sync_service.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../preference/preference_constants.dart';
 import '../../../preference/user_preferences.dart';
@@ -22,7 +20,6 @@ import '../../widgets/bottom_nav/bottom_nav_destinations.dart';
 import '../../widgets/navigation_layout.dart';
 import '../../widgets/overlay_sheet.dart';
 import '../../widgets/settings/preference_tiles.dart';
-import 'moonbase_install_dialog.dart';
 import 'setup_wizard_gate.dart';
 import 'setup_wizard_previews.dart';
 
@@ -83,9 +80,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   SubtitleMode? _subtitleMode;
   bool? _preferDefaultAudioTrack;
   bool _playbackExpanded = false;
-  bool _dialogOpen = false;
-  bool _offerMoonbase = false;
-  bool _moonbaseInstalled = false;
+  bool _pickerOpen = false;
 
   MediaServerClient? get _client => SetupWizardGate.activeClient();
 
@@ -136,9 +131,6 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     setState(() {
       _allSteps = steps;
       _ready = true;
-      _offerMoonbase =
-          GetIt.instance.isRegistered<PluginSyncService>() &&
-          !GetIt.instance<PluginSyncService>().pluginAvailable;
     });
     _focusSelection();
   }
@@ -540,15 +532,8 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
         label: l10n.setupStyleModern,
         hint: l10n.setupRowsModernHint,
         selected: selected == HomeRowsStyle.v2,
-        preview: () => homeRowsPreview(modern: true, carousel: false),
+        preview: () => homeRowsPreview(modern: true),
         onSelect: () => setState(() => _homeRows = HomeRowsStyle.v2),
-      ),
-      _SetupOption(
-        label: l10n.homeRowsStyleCarousel,
-        hint: l10n.setupRowsCarouselHint,
-        selected: selected == HomeRowsStyle.carousel,
-        preview: () => homeRowsPreview(modern: true, carousel: true),
-        onSelect: () => setState(() => _homeRows = HomeRowsStyle.carousel),
       ),
     ];
   }
@@ -574,22 +559,6 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       DetailScreenStyle.minimalist: (
         l10n.setupStyleMinimalist,
         l10n.setupDetailMinimalistHint,
-      ),
-      DetailScreenStyle.stage: (
-        l10n.setupStyleStage,
-        l10n.setupDetailStageHint,
-      ),
-      DetailScreenStyle.premiere: (
-        l10n.setupStylePremiere,
-        l10n.setupDetailPremiereHint,
-      ),
-      DetailScreenStyle.quickLook: (
-        l10n.setupStyleQuickLook,
-        l10n.setupDetailQuickLookHint,
-      ),
-      DetailScreenStyle.frost: (
-        l10n.setupStyleFrost,
-        l10n.setupDetailFrostHint,
       ),
     };
     final selected =
@@ -726,10 +695,6 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                           _buildPlaybackSection(l10n),
                           const SizedBox(height: AppSpacing.spaceSm),
                           _SettingsPath(segments: _languagesPath(l10n)),
-                          if (_offerMoonbase) ...[
-                            const SizedBox(height: AppSpacing.spaceMd),
-                            _buildMoonbaseRow(l10n),
-                          ],
                         ],
                       ],
                     ),
@@ -892,7 +857,6 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
               children: [
                 _buildPlaybackSection(l10n),
                 _SettingsPath(segments: _languagesPath(l10n)),
-                if (_offerMoonbase) _buildMoonbaseRow(l10n),
               ],
             ),
           ),
@@ -1043,30 +1007,6 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     );
   }
 
-  Future<void> _openMoonbase() async {
-    final client = _client;
-    if (client == null || _moonbaseInstalled || _dialogOpen) return;
-    _dialogOpen = true;
-    final isAdmin = GetIt.instance.isRegistered<UserRepository>() &&
-        (GetIt.instance<UserRepository>().currentUser?.isAdministrator ??
-            false);
-    final installed = await showMoonbaseDialog(
-      context,
-      client,
-      isAdmin: isAdmin,
-    );
-    _dialogOpen = false;
-    if (installed && mounted) setState(() => _moonbaseInstalled = true);
-  }
-
-  Widget _buildMoonbaseRow(AppLocalizations l10n) => _MoonbaseRow(
-    order: 20,
-    title: l10n.setupMoonbaseTitle,
-    hint: _moonbaseInstalled ? l10n.installed : l10n.setupMoonbaseHint,
-    installed: _moonbaseInstalled,
-    onPressed: () => unawaited(_openMoonbase()),
-  );
-
   Future<void> _pick<T>({
     required String title,
     required List<T> values,
@@ -1075,8 +1015,8 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     required ValueChanged<T> onPicked,
     String Function(T value)? subtitleOf,
   }) async {
-    if (_dialogOpen) return;
-    _dialogOpen = true;
+    if (_pickerOpen) return;
+    _pickerOpen = true;
     final result = await showSettingsPicker<T>(
       context,
       title: title,
@@ -1085,7 +1025,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       labelOf: labelOf,
       subtitleOf: subtitleOf,
     );
-    _dialogOpen = false;
+    _pickerOpen = false;
     if (!mounted || result == null || result == current) return;
     setState(() => onPicked(result));
   }
@@ -1910,72 +1850,6 @@ class _CollapsibleSection extends StatelessWidget {
         ),
         if (expanded) ...children,
       ],
-    );
-  }
-}
-
-class _MoonbaseRow extends StatelessWidget {
-  const _MoonbaseRow({
-    required this.order,
-    required this.title,
-    required this.hint,
-    required this.installed,
-    required this.onPressed,
-  });
-
-  final int order;
-  final String title;
-  final String hint;
-  final bool installed;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = AppColorScheme.onSurface;
-
-    return _Focusable(
-      order: order,
-      onPressed: onPressed,
-      builder: (focused) => _FocusPanel(
-        focused: focused,
-        radius: 12,
-        padding: const EdgeInsets.all(AppSpacing.spaceMd),
-        child: Row(
-          spacing: AppSpacing.spaceSm,
-          children: [
-            Icon(Icons.dns_rounded, size: 18, color: accent),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                spacing: 2,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: accent,
-                      fontSize: AppTypography.fontSizeSm,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    hint,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: accent.withValues(alpha: 0.65),
-                      fontSize: AppTypography.fontSizeXs,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (installed)
-              Icon(Icons.check_circle_rounded, size: 20, color: accent)
-            else
-              Icon(Icons.chevron_right, color: accent.withValues(alpha: 0.55)),
-          ],
-        ),
-      ),
     );
   }
 }

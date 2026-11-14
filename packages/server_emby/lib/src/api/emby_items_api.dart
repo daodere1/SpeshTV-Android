@@ -15,18 +15,15 @@ class EmbyItemsApi implements ItemsApi {
 
   static String? _knownFields(String? fields) {
     if (fields == null) return null;
+    if (!_unknownToEmbyFields.any(fields.contains)) return fields;
     final kept = fields
         .split(',')
         .map((field) => field.trim())
         .where(
           (field) => field.isNotEmpty && !_unknownToEmbyFields.contains(field),
         )
-        .toList();
-    // Emby leaves LastPlayedDate out of UserData unless it's asked for by name.
-    if (kept.contains('UserData') && !kept.contains('UserDataLastPlayedDate')) {
-      kept.add('UserDataLastPlayedDate');
-    }
-    return kept.isEmpty ? null : kept.join(',');
+        .join(',');
+    return kept.isEmpty ? null : kept;
   }
 
   bool _shouldRetryCollectionFallback(int statusCode) {
@@ -126,7 +123,7 @@ class EmbyItemsApi implements ItemsApi {
       'Is4K': ?is4K,
       'Is3D': ?is3D,
       'IsFavorite': ?isFavorite,
-      'GroupItemsIntoCollections': ?collapseBoxSetItems,
+      'CollapseBoxSetItems': ?collapseBoxSetItems,
       'EnableTotalRecordCount': ?enableTotalRecordCount,
       'EnableImageTypes': ?enableImageTypes,
       'ImageTypeLimit': ?imageTypeLimit,
@@ -337,7 +334,6 @@ class EmbyItemsApi implements ItemsApi {
     String? enableImageTypes,
     int? imageTypeLimit,
     bool recursive = false,
-    bool? hideWatched,
   }) async {
     final userId = _getUserId();
     final response = await _dio.get(
@@ -347,7 +343,6 @@ class EmbyItemsApi implements ItemsApi {
         if (recursive) 'Recursive': true,
         if (includeItemTypes != null)
           'IncludeItemTypes': includeItemTypes.join(','),
-        if (hideWatched == true) 'Filters': 'IsUnplayed',
         if (limit != null) 'Limit': limit,
         'Fields': ?_knownFields(fields),
         if (enableImageTypes != null) 'EnableImageTypes': enableImageTypes,
@@ -383,14 +378,7 @@ class EmbyItemsApi implements ItemsApi {
   }) async {
     final response = await _dio.get(
       '/Shows/$seriesId/Episodes',
-      queryParameters: {
-        'SeasonId': ?seasonId,
-        'Fields': ?_knownFields(fields),
-        // Emby only folds the versions of an episode into one item when the
-        // query names a user. Without it every version comes back as its own
-        // episode, so a season held in 1080p and 4K lists each one twice.
-        'UserId': _getUserId(),
-      },
+      queryParameters: {'SeasonId': ?seasonId, 'Fields': ?_knownFields(fields)},
     );
     return response.data as Map<String, dynamic>;
   }
@@ -497,13 +485,11 @@ class EmbyItemsApi implements ItemsApi {
     String playlistId, {
     int? startIndex,
     int? limit,
-    String? fields,
   }) async {
     final response = await _dio.get(
       '/Playlists/$playlistId/Items',
       queryParameters: {
         'Fields':
-            fields ??
             'BasicSyncInfo,PrimaryImageAspectRatio,RunTimeTicks,Artists,AlbumArtist,IndexNumber,MediaType,PlaylistItemId,BackdropImageTags,ParentBackdropImageTags,ParentBackdropItemId,SeriesName,ParentIndexNumber,Genres,Chapters,Overview,UserData,MediaStreams,DateCreated,SortName',
         'EnableImageTypes': 'Primary,Backdrop,Logo,Thumb',
         'ImageTypeLimit': 1,

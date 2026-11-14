@@ -1,10 +1,6 @@
-import 'package:get_it/get_it.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:moonfin/data/models/aggregated_item.dart';
 import 'package:moonfin/data/viewmodels/book_browse_view_model.dart';
-import 'package:moonfin/preference/user_preferences.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 AggregatedItem folder(String id, String parent, {String? imageTag}) =>
     AggregatedItem(
@@ -41,20 +37,6 @@ AggregatedItem book(
 );
 
 void main() {
-
-  late UserPreferences prefs;
-
-  setUp(() async {
-    await GetIt.instance.reset();
-    SharedPreferences.setMockInitialValues({});
-    final store = PreferenceStore();
-    await store.init();
-    prefs = UserPreferences(store);
-    GetIt.instance.registerSingleton<UserPreferences>(prefs);
-  });
-
-  tearDown(() => GetIt.instance.reset());
-
   // One library path, as Jellyfin lists it: the path's own folder sits under
   // a parent the library query never returns.
   final folders = [
@@ -67,9 +49,7 @@ void main() {
     folder('Green Lantern (2005)', 'root'),
   ];
 
-  test('a folder of comic volumes is one series that opens the folder when foldersAsSeries is enabled', () async {
-    await prefs.set(UserPreferences.bookFoldersAsSeries, true);
-
+  test('a folder of comic volumes is one series that opens the folder', () {
     final entries = bookSeriesEntries(
       books: [
         book('op1', 'One Piece', imageTag: 'op1-cover'),
@@ -92,9 +72,7 @@ void main() {
     expect(entries.first.primaryImageTag, 'berserk-cover');
   });
 
-  test('an author folder of ebooks is not a series when foldersAsSeries is not enabled', () async {
-    await prefs.set(UserPreferences.bookFoldersAsSeries, false);
-
+  test('an author folder of ebooks is not a series', () {
     final entries = bookSeriesEntries(
       books: [
         book('Crooked House', 'Agatha Christie', extension: 'epub'),
@@ -127,9 +105,7 @@ void main() {
     expect(entries, isEmpty);
   });
 
-  test('a named ebook series in an author folder groups by name when foldersAsSeries is not enabled', () async {
-    await prefs.set(UserPreferences.bookFoldersAsSeries, false);
-
+  test('a named ebook series in an author folder groups by name', () {
     final entries = bookSeriesEntries(
       books: [
         book(
@@ -153,9 +129,7 @@ void main() {
     expect(entries.single.childCount, 2);
   });
 
-  test('a named series inside its own folder shows once, as the folder, when foldersAsSeries is enabled', () async {
-    await prefs.set(UserPreferences.bookFoldersAsSeries, true);
-
+  test('a named series inside its own folder shows once, as the folder', () {
     final entries = bookSeriesEntries(
       books: [
         book('op1', 'One Piece', series: 'One Piece'),
@@ -168,9 +142,7 @@ void main() {
     expect(entries.single.rawData['IsFolder'], isTrue);
   });
 
-  test('a named series split over volume folders shows only the folders when foldersAsSeries is enabled', () async {
-    await prefs.set(UserPreferences.bookFoldersAsSeries, true);
-
+  test('a named series split over volume folders shows only the folders', () {
     final entries = bookSeriesEntries(
       books: [
         book('gl1', 'Green Lantern (1990)', series: 'Green Lantern'),
@@ -187,9 +159,7 @@ void main() {
     ]);
   });
 
-  test('a series stacks at most three member covers', () async {
-    await prefs.set(UserPreferences.bookFoldersAsSeries, true);
-
+  test('a series stacks at most three member covers', () {
     final entries = bookSeriesEntries(
       books: [
         for (var i = 1; i <= 5; i++)

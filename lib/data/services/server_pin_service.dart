@@ -2,24 +2,14 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:server_core/server_core.dart';
 
-import 'moonbase_endpoint.dart';
-
 /// Where to reach a user's PIN on the server: the address and the token of the
 /// account, which is not always the one signed in, since the PIN is asked for
 /// before a saved account is switched to.
 class ServerPinAccount {
-  const ServerPinAccount({
-    required this.baseUrl,
-    required this.accessToken,
-    this.plexServerId,
-  });
+  const ServerPinAccount({required this.baseUrl, required this.accessToken});
 
   final String baseUrl;
   final String accessToken;
-
-  /// The saved id of a Plex server, whose PINs are kept by the Moonbase
-  /// companion rather than at [baseUrl]. Null on every other server.
-  final String? plexServerId;
 }
 
 /// Whether the server holds a PIN for the account.
@@ -90,39 +80,25 @@ class ServerPinService {
     return dio;
   }
 
-  /// Where the account's PIN routes start and how to sign them. Null on a Plex
-  /// server whose Moonbase companion can't be found, which leaves the PIN on
-  /// the device to decide.
-  Future<MoonbaseEndpoint?> _endpoint(ServerPinAccount account) async {
-    final plexServerId = account.plexServerId;
-    if (plexServerId != null) {
-      return plexAccountMoonbaseEndpoint(
-        serverId: plexServerId,
-        serverUrl: account.baseUrl,
-        token: account.accessToken,
-        dio: _dio,
-      );
-    }
-    return (
-      base: account.baseUrl,
-      headers: {
-        'Authorization': buildServerAuthorizationHeader(
-          scheme: 'MediaBrowser',
-          deviceInfo: deviceInfo,
-          accessToken: account.accessToken,
-        ),
-      },
-    );
-  }
+  Options _options(ServerPinAccount account) => Options(
+    headers: {
+      'Authorization': buildServerAuthorizationHeader(
+        scheme: 'MediaBrowser',
+        deviceInfo: deviceInfo,
+        accessToken: account.accessToken,
+      ),
+    },
+  );
+
+  String _url(ServerPinAccount account, String path) =>
+      '${account.baseUrl}/Moonfin/$path';
 
   /// Whether the server keeps a PIN for the account.
   Future<ServerPinAvailability> status(ServerPinAccount account) async {
-    final at = await _endpoint(account);
-    if (at == null) return ServerPinAvailability.unavailable;
     try {
       final response = await _dio.get<dynamic>(
-        '${at.base}/Moonfin/Pin',
-        options: Options(headers: at.headers),
+        _url(account, 'Pin'),
+        options: _options(account),
       );
       final data = response.data;
       if (response.statusCode == 200 &&
@@ -140,13 +116,11 @@ class ServerPinService {
 
   /// Asks the server whether [pin] is the account's PIN.
   Future<ServerPinVerdict> verify(ServerPinAccount account, String pin) async {
-    final at = await _endpoint(account);
-    if (at == null) return const ServerPinUnavailable();
     try {
       final response = await _dio.post<dynamic>(
-        '${at.base}/Moonfin/Pin/Verify',
+        _url(account, 'Pin/Verify'),
         data: {'pin': pin},
-        options: Options(headers: at.headers),
+        options: _options(account),
       );
       return _verdict(response);
     } on DioException {
@@ -161,13 +135,11 @@ class ServerPinService {
     String pin, {
     String? currentPin,
   }) async {
-    final at = await _endpoint(account);
-    if (at == null) return const ServerPinUnavailable();
     try {
       final response = await _dio.put<dynamic>(
-        '${at.base}/Moonfin/Pin',
+        _url(account, 'Pin'),
         data: {'pin': pin, 'currentPin': ?currentPin},
-        options: Options(headers: at.headers),
+        options: _options(account),
       );
       return _writeVerdict(response);
     } on DioException {
@@ -180,13 +152,11 @@ class ServerPinService {
     ServerPinAccount account, {
     String? currentPin,
   }) async {
-    final at = await _endpoint(account);
-    if (at == null) return const ServerPinUnavailable();
     try {
       final response = await _dio.delete<dynamic>(
-        '${at.base}/Moonfin/Pin',
+        _url(account, 'Pin'),
         data: {'currentPin': ?currentPin},
-        options: Options(headers: at.headers),
+        options: _options(account),
       );
       return _writeVerdict(response);
     } on DioException {
@@ -200,12 +170,10 @@ class ServerPinService {
     ServerPinAccount account,
     String userId,
   ) async {
-    final at = await _endpoint(account);
-    if (at == null) return const ServerPinUnavailable();
     try {
       final response = await _dio.delete<dynamic>(
-        '${at.base}/Moonfin/Users/$userId/Pin',
-        options: Options(headers: at.headers),
+        _url(account, 'Users/$userId/Pin'),
+        options: _options(account),
       );
       return response.statusCode == 200
           ? const ServerPinValid()

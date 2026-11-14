@@ -283,11 +283,7 @@ class _HubTile extends StatelessWidget {
     final tab = tile.tab;
     final label = tab != null
         ? bottomNavTabLabel(l10n, tab)
-        : bottomNavHubActionLabel(
-            l10n,
-            tile.action!,
-            silo: BottomNavController.activeServerIsSilo,
-          );
+        : bottomNavHubActionLabel(l10n, tile.action!);
     final icon = tab != null
         ? bottomNavTabIconWidget(
             tab,

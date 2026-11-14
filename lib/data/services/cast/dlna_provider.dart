@@ -8,45 +8,26 @@ import 'package:server_core/server_core.dart';
 
 import '../../../util/platform_detection.dart';
 import '../../../playback/device_profile_builder.dart';
-import '../../../playback/silo_playback_environment.dart';
-import '../../../playback/silo_plugin_for.dart';
 import '../../models/aggregated_item.dart';
 import '../media_server_client_factory.dart';
 import 'cast_provider.dart';
-import 'cast_session_reporter.dart';
 import 'cast_target.dart';
 import 'cast_transport_controls.dart';
 import 'native_dlna_channel.dart';
 
-class DlnaProvider
-    implements CastProvider, CastTransportControls, CastServerPlaybackSource {
+class DlnaProvider implements CastProvider, CastTransportControls {
   final NativeDlnaChannel _native;
   final MediaServerClientFactory _clientFactory;
 
   static final Logger _logger = Logger();
 
-  DlnaProvider(this._native, this._clientFactory);
-
-  /// The last cast's Silo session, for the cast service to report.
-  CastServerPlayback? _serverPlayback;
-
-  @override
-  CastServerPlayback? takeServerPlayback() {
-    final playback = _serverPlayback;
-    _serverPlayback = null;
-    return playback;
-  }
+  const DlnaProvider(this._native, this._clientFactory);
 
   MediaStreamResolver _resolverForClient(MediaServerClient client) {
     return switch (client.serverType) {
       ServerType.jellyfin => JellyfinPlugin(client).createStreamResolver(),
       ServerType.emby => EmbyPlugin(client).createStreamResolver(),
       ServerType.plex => PlexMediaStreamResolver(client),
-      // The renderer loads the stream itself.
-      ServerType.silo => siloPluginFor(
-        client,
-        environment: () => siloReceiverEnvironment('dlna'),
-      ).createStreamResolver(),
     };
   }
 
@@ -100,13 +81,6 @@ class DlnaProvider
       title: item.name,
       startPositionTicks: startPositionTicks,
     );
-    _serverPlayback = castNeedsSessionReports(client)
-        ? CastServerPlayback(
-            service: siloPluginFor(client).createPlaySessionService(),
-            item: item,
-            resolution: resolution,
-          )
-        : null;
   }
 
   @override

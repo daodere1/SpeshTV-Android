@@ -31,6 +31,22 @@ void main() {
   );
 
   group('MediaSegmentService auto-skip', () {
+    test('resumed intro stays new until seek prompt suppression ends', () async {
+      final svc = await service([intro], actions: 'intro:askToSkip');
+      expect(svc.checkPosition(const Duration(seconds: 30),
+          suppressPrompts: true).isNone, isTrue);
+      final result = svc.checkPosition(const Duration(seconds: 31));
+      expect(result.shouldAsk, isTrue);
+      expect(result.isNew, isTrue);
+      expect(svc.checkPosition(const Duration(seconds: 32)).isNew, isFalse);
+      expect(svc.checkPosition(const Duration(seconds: 100)).isNone, isTrue);
+    });
+
+    test('suppression does not disable automatic intro skipping', () async {
+      final svc = await service([intro]);
+      expect(svc.checkPosition(const Duration(seconds: 30),
+          suppressPrompts: true).shouldSkip, isTrue);
+    });
     test('skips to the first whole millisecond past the segment', () async {
       final svc = await service([intro]);
       final result = svc.checkPosition(const Duration(seconds: 5));
@@ -105,35 +121,5 @@ void main() {
       // Coming back into it prompts afresh, as before.
       expect(svc.checkPosition(const Duration(seconds: 40)).isNew, isTrue);
     });
-  });
-
-  test('a skip into the last second lands a second before the end', () {
-    const duration = Duration(minutes: 40);
-    expect(
-      skipLandingBeforeEnd(duration, duration),
-      duration - const Duration(seconds: 1),
-    );
-    expect(
-      skipLandingBeforeEnd(duration + const Duration(seconds: 5), duration),
-      duration - const Duration(seconds: 1),
-    );
-    const early = Duration(minutes: 39);
-    expect(skipLandingBeforeEnd(early, duration), early);
-    expect(skipLandingBeforeEnd(duration, Duration.zero), duration);
-  });
-
-  test('credits run to the end when they stop within 5 seconds of it', () {
-    const duration = Duration(minutes: 40);
-    expect(outroRunsToEnd(duration, duration), isTrue);
-    expect(
-      outroRunsToEnd(duration - const Duration(seconds: 5), duration),
-      isTrue,
-    );
-    expect(
-      outroRunsToEnd(duration - const Duration(seconds: 6), duration),
-      isFalse,
-    );
-    expect(outroRunsToEnd(null, duration), isTrue);
-    expect(outroRunsToEnd(const Duration(minutes: 30), Duration.zero), isTrue);
   });
 }

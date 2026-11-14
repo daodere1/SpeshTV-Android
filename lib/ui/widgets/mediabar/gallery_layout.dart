@@ -27,8 +27,6 @@ class GalleryLayout extends StatelessWidget {
 
   final bool trailerActive;
 
-  final double leftInset;
-
   static const int pageSize = 5;
 
   const GalleryLayout({
@@ -41,7 +39,6 @@ class GalleryLayout extends StatelessWidget {
     this.activeRatings,
     this.activeTrailer,
     this.trailerActive = false,
-    this.leftInset = 0,
   });
 
   @override
@@ -91,7 +88,7 @@ class GalleryLayout extends StatelessWidget {
               right: 0,
               height: barHeight,
               child: Padding(
-                padding: EdgeInsets.only(left: 24 + leftInset, right: 24),
+                padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: ClipRRect(
                   borderRadius: AppRadius.circular(18),
                   child: Row(

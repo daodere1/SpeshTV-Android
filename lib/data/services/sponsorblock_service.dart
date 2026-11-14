@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
 const Set<String> sponsorBlockDefaultCategories = {
@@ -42,14 +41,8 @@ class SponsorBlockService {
     }
 
     try {
-      // Only a short hash prefix leaves the device, so SponsorBlock can't tell
-      // which trailer is playing among the videos that share it.
-      final prefix = sha256
-          .convert(utf8.encode(normalizedVideoId))
-          .toString()
-          .substring(0, 4);
       final response = await _dio.get<List<dynamic>>(
-        'https://sponsor.ajay.app/api/skipSegments/$prefix',
+        'https://sponsor.ajay.app/api/skipSegments/$normalizedVideoId',
         queryParameters: <String, dynamic>{
           'categories': jsonEncode(sortedCategories),
         },
@@ -59,11 +52,7 @@ class SponsorBlockService {
         ),
       );
 
-      final match = (response.data ?? const <dynamic>[])
-          .whereType<Map>()
-          .where((entry) => entry['videoID'] == normalizedVideoId)
-          .firstOrNull;
-      final raw = match?['segments'] as List? ?? const <dynamic>[];
+      final raw = response.data ?? const <dynamic>[];
       final parsed = _normalizeSegments(
         raw
             .whereType<Map>()

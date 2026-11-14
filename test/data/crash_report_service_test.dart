@@ -29,9 +29,6 @@ class _TestClient extends Fake implements MediaServerClient {
 
   @override
   ClientLogApi? get clientLogApi => _logApi;
-
-  @override
-  ServerType get serverType => ServerType.jellyfin;
 }
 
 class _TestFactory extends Fake implements MediaServerClientFactory {

@@ -5,6 +5,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../preference/preference_constants.dart';
+import '../spesh_brand.dart';
 
 /// Extension helpers to map loading animation enums to layout properties.
 extension LoadingAnimationSizeX on LoadingAnimationSize {
@@ -305,7 +306,8 @@ class _MoonfinLogoAnimationState extends State<MoonfinLogoAnimation>
           child: child,
         );
       },
-      child: SvgPicture.asset(
+      child: speshWeb ? Icon(Icons.live_tv_outlined,
+        color: const Color(0xFF56D9CC), size: widget.size) : SvgPicture.asset(
         'assets/icons/moonfin_logo.svg',
         width: widget.size,
         height: widget.size,
@@ -494,7 +496,7 @@ class _RunnerAnimationState extends State<RunnerAnimation>
         animation: _controller,
         builder: (context, _) {
           return CustomPaint(
-            painter: RunnerPainter(strideProgress: _controller.value),
+            painter: _RunnerPainter(strideProgress: _controller.value),
           );
         },
       ),
@@ -511,20 +513,10 @@ class _RunnerAnimationState extends State<RunnerAnimation>
   }
 }
 
-/// Also draws the After Hours runner, where [slide] swaps the stride for a
-/// slide and [time] in seconds drives that pose's wobble.
-class RunnerPainter extends CustomPainter {
+class _RunnerPainter extends CustomPainter {
   final double strideProgress;
-  final bool slide;
-  final double time;
 
-  static final _dust = Paint()..color = const Color(0x59CFC9F0);
-
-  RunnerPainter({
-    required this.strideProgress,
-    this.slide = false,
-    this.time = 0,
-  });
+  _RunnerPainter({required this.strideProgress});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -560,12 +552,6 @@ class RunnerPainter extends CustomPainter {
     final headPaint = Paint()
       ..color = headColor
       ..style = PaintingStyle.fill;
-
-    if (slide) {
-      _paintSlide(canvas, size, scale, strokeW, leadLimbPaint, trailLimbPaint,
-          headPaint);
-      return;
-    }
 
     // Stride phase angle (0 to 2*pi)
     final phi = strideProgress * 2 * math.pi;
@@ -668,52 +654,9 @@ class RunnerPainter extends CustomPainter {
     canvas.drawLine(elbow, hand, paint);
   }
 
-  /// Feet first, leaning back with one hand on the floor, in the stride's
-  /// colors and line weights. Drawn in a 54 unit frame with the feet at
-  /// (27, 47), where the stride's feet land.
-  void _paintSlide(
-    Canvas canvas,
-    Size size,
-    double scale,
-    double strokeW,
-    Paint lead,
-    Paint trail,
-    Paint head,
-  ) {
-    final k = size.width / 54;
-    canvas.save();
-    canvas.scale(k);
-    canvas.translate(27, 47);
-    for (var i = 0; i < 3; i++) {
-      canvas.drawCircle(
-        Offset(-19 - i * 6 - (time * 40 % 6), -1.5 - i),
-        2.4 - i * .5,
-        _dust,
-      );
-    }
-    lead.strokeWidth = strokeW / k;
-    trail.strokeWidth = strokeW * 0.92 / k;
-    void limb(Paint paint, List<Offset> points) {
-      for (var i = 1; i < points.length; i++) {
-        canvas.drawLine(points[i - 1], points[i], paint);
-      }
-    }
-
-    final w = math.sin(time * 18) * 1.2;
-    limb(trail, const [Offset(-9, -15), Offset(-14, -9), Offset(-17, -1.5)]);
-    limb(trail, const [Offset(-3, -5), Offset(4, -1.5), Offset(-1, -.5)]);
-    limb(lead, const [Offset(-3, -5), Offset(7, -3), Offset(17, -1.5)]);
-    limb(lead, const [Offset(-3, -5), Offset(-9, -15)]);
-    limb(lead, [const Offset(-9, -15), Offset(-3, -17 + w), Offset(3, -19 + w)]);
-    canvas.drawCircle(const Offset(-12, -21), 7.5 * scale / k, head);
-    canvas.restore();
-  }
-
   @override
-  bool shouldRepaint(covariant RunnerPainter oldDelegate) =>
-      oldDelegate.strideProgress != strideProgress ||
-      oldDelegate.slide != slide ||
-      oldDelegate.time != time;
+  bool shouldRepaint(covariant _RunnerPainter oldDelegate) =>
+      oldDelegate.strideProgress != strideProgress;
 }
 
 /// Color palettes for the lunar cycle animation.

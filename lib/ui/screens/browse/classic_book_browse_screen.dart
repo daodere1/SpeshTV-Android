@@ -25,14 +25,13 @@ import '../../widgets/book/classic/book_shelf_row.dart';
 import '../../widgets/book/classic/book_stats_band.dart';
 import '../../widgets/focus/can_claim_initial_focus.dart';
 import '../../widgets/focus/context_menu_sheet.dart';
-import '../../widgets/settings/settings_preview_scope.dart';
 import '../../widgets/skeleton/skeleton_library_grid.dart';
 import '../../widgets/focus/locked_focus_row.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../widgets/bottom_nav/bottom_navbar.dart';
 import '../../widgets/left_sidebar.dart';
+import '../../widgets/navigation_layout.dart';
 import '../../widgets/top_toolbar.dart';
-import 'library_page_state.dart';
 
 class ClassicBookBrowseScreen extends StatefulWidget {
   final String libraryId;
@@ -101,9 +100,7 @@ class _ClassicBookBrowseScreenState extends State<ClassicBookBrowseScreen> {
   void _onChanged() {
     if (!mounted) return;
     setState(() {});
-    if (!PlatformDetection.useMobileUi &&
-        !_vm.isLoading &&
-        !inSettingsPreview(context)) {
+    if (!PlatformDetection.useMobileUi && !_vm.isLoading) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted ||
             _vm.isLoading ||
@@ -214,9 +211,9 @@ class _ClassicBookBrowseScreenState extends State<ClassicBookBrowseScreen> {
   Widget _buildContent(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColorScheme.background,
-      body: libraryNavigation(
-        context,
+      body: NavigationLayout(
         activeRoute: '/books/${widget.libraryId}',
+        showBackButton: true,
         child: _vm.isLoading
             ? const SkeletonLibraryGrid(
                 cardWidth: 160,

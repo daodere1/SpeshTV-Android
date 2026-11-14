@@ -10,7 +10,6 @@ import '../../../../../util/item_watch_state.dart';
 import '../../../../navigation/destinations.dart';
 import '../../../../widgets/seerr/seerr_image_urls.dart';
 import '../shared/nouveau_poster_card.dart';
-import '../../../../../preference/seerr_preferences.dart';
 
 class NouveauDiscoveryCard extends StatelessWidget {
   final AggregatedItem item;
@@ -111,7 +110,7 @@ class NouveauDiscoveryCard extends StatelessWidget {
         ],
       ),
       child: Text(
-        seerrBrand(l10n.seerr),
+        l10n.seerr,
         style: const TextStyle(
           color: Colors.white,
           fontSize: 10.5,

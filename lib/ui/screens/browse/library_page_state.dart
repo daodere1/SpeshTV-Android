@@ -16,22 +16,7 @@ import '../../widgets/focus/locked_focus_row.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../widgets/left_sidebar.dart';
 import '../../widgets/navigation_layout.dart';
-import '../../widgets/settings/settings_preview_scope.dart';
 import '../../widgets/top_toolbar.dart';
-
-/// The app's navbar around a library page, which the settings preview draws
-/// itself.
-Widget libraryNavigation(
-  BuildContext context, {
-  required String activeRoute,
-  required Widget child,
-}) => inSettingsPreview(context)
-    ? child
-    : NavigationLayout(
-        activeRoute: activeRoute,
-        showBackButton: true,
-        child: child,
-      );
 
 /// What every library page built from D-pad stops shares: the stops, the
 /// sections they sit in and the app's chrome around them.
@@ -115,7 +100,7 @@ abstract class LibraryPageState<T extends StatefulWidget> extends State<T> {
   void contentChanged() {
     if (!mounted) return;
     setState(() {});
-    if (!wide || isLoading || inSettingsPreview(context)) return;
+    if (!wide || isLoading) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           isLoading ||
@@ -157,9 +142,9 @@ abstract class LibraryPageState<T extends StatefulWidget> extends State<T> {
     targetNode: initialFocusNode,
     child: Scaffold(
       backgroundColor: AppColorScheme.background,
-      body: libraryNavigation(
-        context,
+      body: NavigationLayout(
         activeRoute: activeRoute,
+        showBackButton: true,
         child: isLoading && loadingPlaceholder != null
             ? loadingPlaceholder!
             : content(),

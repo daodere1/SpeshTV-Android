@@ -14,14 +14,6 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
   );
 
   @override
-  void initState() {
-    super.initState();
-    if (GetIt.instance.isRegistered<PosterBadgeRepository>()) {
-      unawaited(GetIt.instance<PosterBadgeRepository>().checkAvailable());
-    }
-  }
-
-  @override
   void dispose() {
     _appearanceScope.dispose();
     super.dispose();
@@ -40,11 +32,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
         // Rebuild on preference changes so the Glass Quality tile appears or
         // disappears the moment the glass theme is selected or replaced.
         child: ListenableBuilder(
-          listenable: Listenable.merge([
-            GetIt.instance<UserPreferences>(),
-            if (GetIt.instance.isRegistered<PosterBadgeRepository>())
-              GetIt.instance<PosterBadgeRepository>().available,
-          ]),
+          listenable: GetIt.instance<UserPreferences>(),
           builder: (context, _) => ListView(
             padding: EdgeInsets.only(bottom: bottomPad),
             children: [
@@ -188,8 +176,7 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
                         InterfaceLayout.tv,
                         if (PlatformDetection.isDesktop)
                           InterfaceLayout.desktop,
-                        if (PlatformDetection.canUsePhoneLayout)
-                          InterfaceLayout.phone,
+                        if (PlatformDetection.isAndroid) InterfaceLayout.phone,
                       ],
                       labelOf: (v) => switch (v) {
                         InterfaceLayout.automatic =>
@@ -249,15 +236,6 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
                       WatchedIndicatorBehavior.never => l10n.never,
                     },
                   ),
-                  // Only when the server gives this person labels, since it
-                  // would switch nothing otherwise.
-                  if (_posterLabelsAvailable)
-                    SwitchPreferenceTile(
-                      preference: UserPreferences.showPosterLabels,
-                      title: l10n.showPosterLabels,
-                      subtitle: l10n.showPosterLabelsSubtitle,
-                      icon: Icons.label_outline,
-                    ),
                 ],
               ),
               if (!PlatformDetection.useMobileUi) ...[
@@ -332,7 +310,3 @@ class _AppearanceScreenState extends State<_AppearanceScreen> {
     );
   }
 }
-
-bool get _posterLabelsAvailable =>
-    GetIt.instance.isRegistered<PosterBadgeRepository>() &&
-    GetIt.instance<PosterBadgeRepository>().available.value == true;

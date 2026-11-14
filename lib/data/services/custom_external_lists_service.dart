@@ -9,7 +9,6 @@ import 'package:server_core/server_core.dart';
 import '../../l10n/current_app_localizations.dart';
 import '../../preference/home_section_config.dart';
 import '../../util/platform_detection.dart';
-import 'moonbase_endpoint.dart';
 
 class ImdbExternalListItem {
   final String imdbId;
@@ -102,50 +101,6 @@ class ImdbExternalListItem {
       );
 }
 
-/// Reads https://mdblist.com/lists/{username}/{listname} with an optional
-/// trailing slash, query string or fragment. Anchoring on the /lists/ segment
-/// keeps extra path segments from producing the wrong pair. An official list's
-/// movies or shows page, /lists/official/{movies|shows}/{slug}, also gets a
-/// mediatype so the row keeps just that type.
-Map<String, String> parseMdblistListUrl(String url) {
-  var rawUrl = url.trim();
-  final queryStart = rawUrl.indexOf(RegExp(r'[?#]'));
-  if (queryStart >= 0) {
-    rawUrl = rawUrl.substring(0, queryStart);
-  }
-  final parts = rawUrl.split('/').where((s) => s.isNotEmpty).toList();
-  final listsIndex = parts.lastIndexOf('lists');
-  if (listsIndex >= 0 &&
-      parts.length >= listsIndex + 4 &&
-      parts[listsIndex + 1].toLowerCase() == 'official' &&
-      RegExp(r'^(movies|shows)$', caseSensitive: false).hasMatch(parts[listsIndex + 2])) {
-    return {
-      'username': 'official',
-      'listname': parts[listsIndex + 3],
-      'mediatype': parts[listsIndex + 2].toLowerCase() == 'movies' ? 'movie' : 'show',
-    };
-  }
-  if (listsIndex >= 0 && parts.length >= listsIndex + 3) {
-    return {'username': parts[listsIndex + 1], 'listname': parts[listsIndex + 2]};
-  }
-  if (parts.length >= 2) {
-    return {'username': parts[parts.length - 2], 'listname': parts.last};
-  }
-  return {'username': '', 'listname': ''};
-}
-
-/// The list's page on MDBList, which [parseMdblistListUrl] reads back.
-String mdblistListUrl(Map<String, dynamic> params) {
-  final username = params['username'] as String? ?? '';
-  final listname = params['listname'] as String? ?? '';
-  final mediaPath = switch (params['mediatype']) {
-    'movie' => 'movies/',
-    'show' => 'shows/',
-    _ => '',
-  };
-  return 'https://mdblist.com/lists/$username/$mediaPath$listname';
-}
-
 class CustomExternalListsService {
   final Dio _dio;
 
@@ -194,7 +149,9 @@ class CustomExternalListsService {
         final username = params['user'] as String? ?? '';
         return 'https://letterboxd.com/$username/';
       case 'mdblist':
-        return '${mdblistListUrl(params)}/';
+        final username = params['username'] as String? ?? '';
+        final listname = params['listname'] as String? ?? '';
+        return 'https://mdblist.com/lists/$username/$listname/';
       default:
         return 'Unknown Source';
     }
@@ -233,7 +190,14 @@ class CustomExternalListsService {
       return loadCustomRowFromCache(config, language: language);
     }
 
+    final baseUrl = client.baseUrl;
+    final token = client.accessToken;
+    if (token == null) {
+      return loadCustomRowFromCache(config, language: language);
+    }
+
     final paramsJson = jsonEncode(params);
+    final url = '$baseUrl/Moonfin/CustomRows/Items';
     final lang = language ?? currentAppLocale().toLanguageTag();
 
     // The account that starts the fetch owns the answer: the scope is taken
@@ -243,18 +207,11 @@ class CustomExternalListsService {
     // rather than after the answer, since an empty or failed answer saves
     // nothing and the old row must not outlive it.
     final scope = _cacheScope();
-    // Moonbase for Silo serves no custom rows.
-    final ep = client.serverType == ServerType.silo
-        ? null
-        : await moonbaseEndpoint(client, _dio);
-    if (ep == null) {
-      return loadCustomRowFromCache(config, language: language);
-    }
     await _dropLegacyCacheFor(config, scope);
 
     try {
       final response = await _dio.get(
-        '${ep.base}/Moonfin/CustomRows/Items',
+        url,
         queryParameters: {
           'source': source,
           'type': type,
@@ -264,7 +221,15 @@ class CustomExternalListsService {
           // refresh=true, so all devices see the refreshed list.
           if (forceRefresh) 'refresh': 'true',
         },
-        options: Options(headers: ep.headers),
+        options: Options(
+          headers: {
+            'Authorization': buildServerAuthorizationHeader(
+              scheme: 'MediaBrowser',
+              deviceInfo: client.deviceInfo,
+              accessToken: token,
+            ),
+          },
+        ),
       );
 
       if (_cacheScope() != scope) {

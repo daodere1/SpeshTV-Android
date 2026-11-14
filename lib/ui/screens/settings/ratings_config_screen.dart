@@ -15,7 +15,6 @@ import '../../../l10n/app_localizations.dart';
 import '../../widgets/adaptive/adaptive_dialog.dart';
 import '../../widgets/overlay_sheet.dart';
 import '../../widgets/settings/clean_settings_typography.dart';
-import '../../widgets/settings/settings_preview_scope.dart';
 import 'settings_app_bar.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../../util/focus/scroll_utils.dart';
@@ -230,16 +229,9 @@ class _RatingsConfigScreenState extends State<RatingsConfigScreen> {
               ),
             ],
           ),
-          body: SettingsPreviewReporter(
-            describe: () => SettingsPreviewEntry(
-              prefKey: _settings.sources.key,
-              title: l10n.ratingSources,
-              description: l10n.ratingSourcesDescription,
-            ),
-            child: PlatformDetection.isTV
-                ? _buildTvList(l10n)
-                : _buildReorderableList(l10n),
-          ),
+          body: PlatformDetection.isTV
+              ? _buildTvList(l10n)
+              : _buildReorderableList(l10n),
         ),
       ),
     );

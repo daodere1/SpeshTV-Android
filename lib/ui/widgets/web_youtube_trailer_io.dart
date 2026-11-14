@@ -2,17 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
-import 'package:moonfin_native_video/moonfin_native_video.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
-import '../../util/platform_detection.dart';
+import '../../util/youtube_embed_identity.dart';
 
-enum _EmbeddedPlayerMode {
-  manualIframe,
-  unsupported,
-}
+enum _EmbeddedPlayerMode { manualIframe, unsupported }
 
 class WebYouTubeTrailer extends StatefulWidget {
   final String videoId;
@@ -55,20 +52,14 @@ class WebYouTubeTrailer extends StatefulWidget {
 class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
   static const _jsChannelName = 'MoonfinYt';
   static const _bridgeName = '__moonfinYtBridge';
-  static const _origin = 'https://www.youtube-nocookie.com';
+  static const _embedHost = 'https://www.youtube.com';
+  late String _origin;
   static const _playerElementId = 'moonfin-player';
   static const _stageElementId = 'moonfin-stage';
-  // YouTube picks the quality from the player's pixel size, so a 1080p stage
-  // gets 1080p trailers.
+  // Rendered at this fixed size and CSS-scaled to the box; YouTube picks quality
+  // from the player's pixel size, so a 1080p stage yields 1080p trailers.
   static const _stageWidth = 1920;
   static const _stageHeight = 1080;
-  // Amazon WebView's hardware video overlay follows the element's layout box
-  // but not CSS transforms, so on Android TV the stage is sized to cover the
-  // box instead of being scaled. The WebView's density still gives YouTube a
-  // 1080p-sized player on a 1080p TV. Phones keep the scaled stage, since
-  // their smaller box would get a lower quality.
-  static bool get _layoutSizedStage =>
-      PlatformDetection.isAndroid && !PlatformDetection.isMobile;
   static const _startupChromeMaskDuration = Duration(milliseconds: 700);
 
   WebViewController? _controller;
@@ -215,15 +206,18 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
 
   Future<void> _initializeController() async {
     try {
+      final package = await PackageInfo.fromPlatform();
+      _origin = youtubeEmbedOrigin(package.packageName);
+      if (!mounted) return;
       // iOS/macOS need inline playback with no user-gesture gate for muted
       // autoplay; otherwise the WebView blocks it and the caller falls back.
       final PlatformWebViewControllerCreationParams params =
           WebViewPlatform.instance is WebKitWebViewPlatform
-              ? WebKitWebViewControllerCreationParams(
-                  allowsInlineMediaPlayback: true,
-                  mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
-                )
-              : const PlatformWebViewControllerCreationParams();
+          ? WebKitWebViewControllerCreationParams(
+              allowsInlineMediaPlayback: true,
+              mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+            )
+          : const PlatformWebViewControllerCreationParams();
 
       final controller = WebViewController.fromPlatformCreationParams(params);
 
@@ -234,10 +228,21 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
           onMessageReceived: _onJavaScriptMessage,
         );
 
+      await controller.setNavigationDelegate(NavigationDelegate(
+        onWebResourceError: (error) {
+          debugPrint('SpeshTV YouTube: web error ${error.errorCode}; '
+              'mainFrame=${error.isForMainFrame}');
+        },
+      ));
+
       // Android blocks autoplay until a user gesture unless disabled here.
       final platform = controller.platform;
       if (platform is AndroidWebViewController) {
         await platform.setMediaPlaybackRequiresUserGesture(false);
+        final cookies = WebViewCookieManager().platform;
+        if (cookies is AndroidWebViewCookieManager) {
+          await cookies.setAcceptThirdPartyCookies(platform, true);
+        }
       }
 
       // macOS can't clear the WebView background, so it shows white until the
@@ -255,7 +260,8 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
         return;
       }
       setState(() {});
-    } catch (_) {
+    } catch (error) {
+      debugPrint('SpeshTV YouTube: initialization failed (${error.runtimeType})');
       _reportEmbeddedUnavailable();
     }
   }
@@ -303,12 +309,14 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
     // Events posted by the previous video can arrive after a swap; drop
     // state and error messages that carry a different video id.
     final eventVideoId = payload['videoId']?.toString();
-    final isStaleEvent = eventVideoId != null &&
+    final isStaleEvent =
+        eventVideoId != null &&
         eventVideoId.isNotEmpty &&
         eventVideoId != widget.videoId;
 
     switch (eventName) {
       case 'Ready':
+        debugPrint('SpeshTV YouTube: player ready');
         _restartAutoplayTimer();
         return;
 
@@ -367,12 +375,14 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
   }
 
   void _handleYouTubeError(int errorCode) {
+    debugPrint('SpeshTV YouTube: player error $errorCode');
     switch (errorCode) {
       case 100:
       case 101:
       case 105:
       case 150:
       case 152:
+      case 153:
         _reportEmbeddedUnavailable();
         return;
 
@@ -410,13 +420,15 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
     }
 
     _playbackStarted = true;
+    debugPrint('SpeshTV YouTube: playing');
     _autoplayTimer?.cancel();
     _showStartupChromeMask();
     widget.onPlaybackStarted?.call();
   }
 
   void _showStartupChromeMask() {
-    if (_playerMode != _EmbeddedPlayerMode.manualIframe || widget.ignorePointer) {
+    if (_playerMode != _EmbeddedPlayerMode.manualIframe ||
+        widget.ignorePointer || widget.showControls) {
       return;
     }
 
@@ -448,6 +460,7 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
     }
 
     _autoplayFailureReported = true;
+    debugPrint('SpeshTV YouTube: autoplay blocked or timed out');
     _autoplayTimer?.cancel();
     widget.onAutoplayFailed?.call();
   }
@@ -470,9 +483,10 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
   String get _playerHtml {
     final pointerEvents = widget.ignorePointer ? 'none' : 'auto';
     final playerVars = <String, dynamic>{
+      'autoplay': 1,
       'cc_load_policy': widget.showCaptions ? 1 : 0,
       'controls': widget.showControls ? 1 : 0,
-      'disablekb': 1,
+      'disablekb': widget.showControls ? 0 : 1,
       'enablejsapi': 1,
       'fs': 0,
       'iv_load_policy': 3,
@@ -490,18 +504,18 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
     final bridgeName = jsonEncode(_bridgeName);
     final playerElementId = jsonEncode(_playerElementId);
     final stageElementId = jsonEncode(_stageElementId);
-    final host = jsonEncode(_origin);
+    final host = jsonEncode(_embedHost);
     final initialVideoId = jsonEncode(widget.videoId);
     final pointerEventsJson = jsonEncode(pointerEvents);
     final playerVarsJson = jsonEncode(playerVars);
     final stageWidth = _stageWidth;
     final stageHeight = _stageHeight;
-    final layoutSizedStage = _layoutSizedStage;
 
     return '''
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
@@ -528,7 +542,7 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
         height: 100%;
       }
     </style>
-    <title>Moonfin YouTube Player</title>
+    <title>SpeshTV YouTube Player</title>
   </head>
   <body>
     <script>
@@ -542,7 +556,6 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
   const playerVars = $playerVarsJson;
   const stageWidth = $stageWidth;
   const stageHeight = $stageHeight;
-  const layoutSizedStage = $layoutSizedStage;
 
   let player = null;
   let currentVideoId = $initialVideoId;
@@ -624,13 +637,6 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
     );
     const tx = (window.innerWidth - stageWidth * scale) / 2;
     const ty = (window.innerHeight - stageHeight * scale) / 2;
-    if (layoutSizedStage) {
-      stage.style.width = (stageWidth * scale) + 'px';
-      stage.style.height = (stageHeight * scale) + 'px';
-      stage.style.left = tx + 'px';
-      stage.style.top = ty + 'px';
-      return;
-    }
     stage.style.transform =
         'translate(' + tx + 'px, ' + ty + 'px) scale(' + scale + ')';
   };
@@ -651,14 +657,11 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
       applyMute();
     },
     stop: function() {
-      if (!player) {
-        // Ready hasn't fired yet, so drop the video or Ready would start it.
-        currentVideoId = null;
-        return;
+      if (player) {
+        // Mute first so audio dies immediately even if stopVideo lags.
+        try { player.mute(); } catch (_) {}
+        try { player.stopVideo(); } catch (_) {}
       }
-      // Mute first so audio dies immediately even if stopVideo lags.
-      try { player.mute(); } catch (_) {}
-      try { player.stopVideo(); } catch (_) {}
     }
   };
 
@@ -678,7 +681,7 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
 
   const scriptTag = document.createElement('script');
   scriptTag.src = 'https://www.youtube.com/iframe_api';
-  document.head.appendChild(scriptTag);
+  scriptTag.onerror = () => postMessage('PlayerError', -1);
 
   const previousOnReady = window.onYouTubeIframeAPIReady;
   window.onYouTubeIframeAPIReady = () => {
@@ -692,13 +695,13 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
       host: host,
       width: stageWidth,
       height: stageHeight,
+      videoId: currentVideoId,
       playerVars: playerVars,
       events: {
-        // The video only loads here. Passing it to the constructor too would
-        // load it twice.
         onReady: function() {
           postMessage('Ready', null);
-          loadCurrentVideo();
+          applyMute();
+          applyCaptions();
         },
         onApiChange: function() {
           // The captions module reports itself here once it loads, which is the
@@ -725,6 +728,9 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
     });
   };
 
+  // Register the callback before requesting the asynchronously loaded API.
+  document.head.appendChild(scriptTag);
+
   window.addEventListener('resize', applyScale);
 })();
     </script>
@@ -744,16 +750,12 @@ class _WebYouTubeTrailerState extends State<WebYouTubeTrailer> {
 
         // The chrome mask only ever shows when the player is interactive, so
         // skip the wrapping Stack for the muted background preview.
-        // Sized in the view's own points: a WebView that plays on a hardware
-        // video overlay (Amazon WebView on Fire TV) draws the video at the
-        // native view's size, so under TvUiScale it came out zoomed.
-        final view = UnscaledPlatformView(
-          child: WebViewWidget(controller: controller),
-        );
+        final view = WebViewWidget(controller: controller);
         return IgnorePointer(
           ignoring: widget.ignorePointer,
-          child:
-              widget.ignorePointer ? view : _buildWithStartupChromeMask(view),
+          child: widget.ignorePointer
+              ? view
+              : _buildWithStartupChromeMask(view),
         );
 
       case _EmbeddedPlayerMode.unsupported:

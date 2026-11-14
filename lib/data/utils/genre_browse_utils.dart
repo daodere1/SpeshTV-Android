@@ -114,6 +114,17 @@ int browsableGenreCount(
   return _asInt(genreData['ChildCount']);
 }
 
+bool hasGenreItemCount(Map<String, dynamic> data) => const [
+  'ChildCount', 'MovieCount', 'SeriesCount', 'AlbumCount', 'SongCount',
+  'ArtistCount', 'MusicVideoCount',
+].any((field) => data[field] is num || int.tryParse('${data[field]}') != null);
+
+int genrePageCount(Map<String, dynamic> response) {
+  final count = _asInt(response['TotalRecordCount']);
+  final returned = (response['Items'] as List?)?.length ?? 0;
+  return count > returned ? count : returned;
+}
+
 Map<String, dynamic> mergeGenreWithRepresentativeItem({
   required Map<String, dynamic> genreData,
   required Map<String, dynamic> representativeItem,

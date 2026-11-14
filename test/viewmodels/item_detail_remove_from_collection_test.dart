@@ -17,22 +17,9 @@ class _Client extends Mock implements MediaServerClient {}
 
 class _ItemsApi extends Mock implements ItemsApi {}
 
-/// A server that lets the user edit only some collections (Silo).
-class _EditableItemsApi extends _ItemsApi implements EditableCollectionsApi {
-  bool editable = false;
-  Map<String, dynamic>? asked;
-
-  @override
-  bool canEditCollection(Map<String, dynamic> collection) {
-    asked = collection;
-    return editable;
-  }
-}
-
 class _PluginSyncService extends Mock implements PluginSyncService {}
 
 void main() {
-  setUpAll(() => registerFallbackValue(_Client()));
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _Client client;
@@ -45,9 +32,24 @@ void main() {
     'ServerId': 'server-1',
   };
 
-  void stubCollection(_ItemsApi api) {
+  setUp(() async {
+    await GetIt.instance.reset();
+    SharedPreferences.setMockInitialValues({});
+    final store = PreferenceStore();
+    await store.init();
+    GetIt.instance.registerSingleton<UserPreferences>(UserPreferences(store));
+    final pluginSync = _PluginSyncService();
+    when(() => pluginSync.seerrAvailable).thenReturn(false);
+    when(() => pluginSync.pluginAvailable).thenReturn(false);
+    GetIt.instance.registerSingleton<PluginSyncService>(pluginSync);
+
+    client = _Client();
+    itemsApi = _ItemsApi();
+    when(() => client.itemsApi).thenReturn(itemsApi);
+    when(() => client.baseUrl).thenReturn('http://server');
+
     when(
-      () => api.getItem(
+      () => itemsApi.getItem(
         'boxset-1',
         mediaSourceId: any(named: 'mediaSourceId'),
       ),
@@ -56,7 +58,7 @@ void main() {
     );
 
     when(
-      () => api.getItems(
+      () => itemsApi.getItems(
         parentId: 'boxset-1',
         startIndex: 0,
         limit: any(named: 'limit'),
@@ -72,25 +74,6 @@ void main() {
         'TotalRecordCount': 3,
       },
     );
-  }
-
-  setUp(() async {
-    await GetIt.instance.reset();
-    SharedPreferences.setMockInitialValues({});
-    final store = PreferenceStore();
-    await store.init();
-    GetIt.instance.registerSingleton<UserPreferences>(UserPreferences(store));
-    final pluginSync = _PluginSyncService();
-    when(() => pluginSync.seerrAvailable).thenReturn(false);
-    when(() => pluginSync.pluginAvailable).thenReturn(false);
-    when(() => pluginSync.collectionOrderSupported(any())).thenReturn(false);
-    GetIt.instance.registerSingleton<PluginSyncService>(pluginSync);
-
-    client = _Client();
-    itemsApi = _ItemsApi();
-    when(() => client.itemsApi).thenReturn(itemsApi);
-    when(() => client.baseUrl).thenReturn('http://server');
-    stubCollection(itemsApi);
   });
 
   tearDown(() => GetIt.instance.reset());
@@ -120,26 +103,6 @@ void main() {
     await vm.removeFromCollection(alpha);
 
     verify(() => itemsApi.removeFromCollection('boxset-1', ['a'])).called(1);
-  });
-
-  test('any collection page offers removal on a server without a rule',
-      () async {
-    final vm = await loadedVm();
-    expect(vm.canRemoveFromCollection, isTrue);
-  });
-
-  test('a server that limits editing decides per collection', () async {
-    final editable = _EditableItemsApi();
-    stubCollection(editable);
-    when(() => client.itemsApi).thenReturn(editable);
-    itemsApi = editable;
-
-    final vm = await loadedVm();
-    expect(vm.canRemoveFromCollection, isFalse);
-    expect(editable.asked?['Id'], 'boxset-1');
-
-    editable.editable = true;
-    expect(vm.canRemoveFromCollection, isTrue);
   });
 
   test('the card leaves the grid on success and the counts follow', () async {

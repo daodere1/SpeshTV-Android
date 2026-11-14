@@ -44,8 +44,6 @@ import '../../playback/html_video_backend_profile.dart';
 import '../../playback/inline_preview_engine.dart';
 import '../../playback/media3_player_backend.dart';
 import '../../playback/mpv_client_certificate.dart';
-import '../../playback/mpv_player_registry.dart';
-import '../../playback/silo_plugin_for.dart';
 import 'bounded_network_image.dart';
 import 'fullscreen_backdrop_switcher.dart';
 import 'navigation_layout.dart';
@@ -53,9 +51,7 @@ import 'mediabar/bookshelf_layout.dart';
 import 'mediabar/aya_media_bar.dart';
 import 'mediabar/gallery_coverflow.dart';
 import 'mediabar/gallery_layout.dart';
-import 'mediabar/media_bar_nav_arrow.dart';
 import 'mediabar/media_bar_status_focus.dart';
-import 'mediabar/media_bar_new_release_label.dart';
 import 'mediabar/media_bar_title.dart';
 import 'rating_display.dart';
 import 'web_local_trailer.dart';
@@ -237,35 +233,10 @@ class _MediaBarState extends State<MediaBar>
   late bool _lastHardwareDecodingEnabled;
   late bool _lastUseMedia3TrailerEngine;
 
-  // The left sidebar is drawn over the media bar, so content starts past it.
-  double get _sidebarInset =>
-      !PlatformDetection.useMobileUi &&
-          widget.prefs.get(UserPreferences.navbarPosition) ==
-              NavbarPosition.left
-      ? 56.0
-      : 0.0;
-
-  /// Fades the backdrop out toward the bar's bottom edge, so the rows below
-  /// it, or one peeking up into it, meet a soft fade instead of a hard line.
-  /// Desktop and web only, since the mask redraws with every frame of the
-  /// backdrop's slow zoom.
-  Widget _fadeBackdropBottom(Widget backdrop) {
-    if (!PlatformDetection.useDesktopUi) return backdrop;
-    return ShaderMask(
-      blendMode: BlendMode.dstIn,
-      shaderCallback: (bounds) {
-        final fade = widget.rowPeek > 0
-            ? widget.rowPeek * 1.5
-            : bounds.height * 0.2;
-        return LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: const [Colors.white, Colors.transparent],
-          stops: [(1 - fade / bounds.height).clamp(0.0, 1.0), 1.0],
-        ).createShader(bounds);
-      },
-      child: backdrop,
-    );
+  bool get _hideLeftNavArrowForSidebar {
+    if (PlatformDetection.useMobileUi) return false;
+    return widget.prefs.get(UserPreferences.navbarPosition) ==
+        NavbarPosition.left;
   }
 
   Color _mediaBarOverlayColor() {
@@ -355,9 +326,9 @@ class _MediaBarState extends State<MediaBar>
     try {
       await _appleTvTrailerPlayer?.stop();
     } catch (_) {}
-    // _cancelTrailerPreview released Media3 if the trailer owned it. The
-    // backend is shared with main playback, which is what revokes the
-    // trailer, so releasing it again here would stop that playback.
+    try {
+      await _media3TrailerBackend?.release();
+    } catch (_) {}
   }
 
   @override
@@ -842,16 +813,35 @@ class _MediaBarState extends State<MediaBar>
   List<Widget> _buildNavArrows(
     BuildContext context,
     int itemCount, {
-    double leftInset = 0,
-    double rightInset = 0,
-  }) => mediaBarNavArrows(
-    context,
-    onPrevious: _currentIndex > 0 ? () => _goToPage(_currentIndex - 1) : null,
-    onNext: () => _goToPage((_currentIndex + 1) % itemCount),
-    leftInset: leftInset,
-    rightInset: rightInset,
-    bottomInset: widget.rowPeek,
-  );
+    double nextRightInset = 0,
+  }) {
+    final isRtl = Directionality.of(context) == TextDirection.rtl;
+    final prevArrow = _NavArrow(
+      icon: Icons.chevron_left,
+      onTap: _currentIndex > 0 ? () => _goToPage(_currentIndex - 1) : null,
+    );
+    final nextArrow = _NavArrow(
+      icon: Icons.chevron_right,
+      onTap: () => _goToPage((_currentIndex + 1) % itemCount),
+    );
+    final leftArrow = isRtl ? nextArrow : prevArrow;
+    final rightArrow = isRtl ? prevArrow : nextArrow;
+    return [
+      if (!_hideLeftNavArrowForSidebar)
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: widget.rowPeek,
+          child: Center(child: leftArrow),
+        ),
+      Positioned(
+        right: nextRightInset,
+        top: 0,
+        bottom: widget.rowPeek,
+        child: Center(child: rightArrow),
+      ),
+    ];
+  }
 
   void _onPageChanged(int index) {
     setState(() => _currentIndex = index);
@@ -1031,7 +1021,7 @@ class _MediaBarState extends State<MediaBar>
     // Media3 is a shared singleton (also drives row previews); only release it
     // when the trailer owned it.
     if (wasUsingMedia3) {
-      unawaited(_media3TrailerBackend?.release(previewOnly: true));
+      unawaited(_media3TrailerBackend?.release());
     }
     _activeTrailerItemId = null;
     _pendingTrailerItemId = null;
@@ -1116,7 +1106,7 @@ class _MediaBarState extends State<MediaBar>
     List<Map<String, dynamic>> remoteTrailers = item.remoteTrailers;
     // Plex items never carry trailer links, so there's nothing to fetch and
     // one is searched for instead.
-    if (!client.features.supportsRemoteTrailers) {
+    if (client.serverType == ServerType.plex) {
       if (streamUrl == null) {
         final url = await YouTubeStreamResolver.searchTrailer(
           item.title,
@@ -1154,6 +1144,7 @@ class _MediaBarState extends State<MediaBar>
           if (!webOnly) {
             final stream = await YouTubeStreamResolver.resolveFromUrl(
               url,
+              maxHeight: PlatformDetection.isAndroid ? 360 : null,
             ).timeout(_trailerResolveTimeout, onTimeout: () => null);
             streamUrl = stream?.url;
             if (streamUrl != null) {
@@ -1567,7 +1558,7 @@ class _MediaBarState extends State<MediaBar>
     final existing = _trailerPlayer;
     if (existing != null) return existing;
 
-    final player = MpvPlayerRegistry.instance.create(
+    final player = Player(
       configuration: const PlayerConfiguration(libass: false),
     );
     _trailerPlayer = player;
@@ -1627,9 +1618,7 @@ class _MediaBarState extends State<MediaBar>
     _trailerPlayer = null;
     _trailerController = null;
     await player?.stop();
-    if (player != null) {
-      unawaited(MpvPlayerRegistry.instance.dispose(player));
-    }
+    player?.dispose();
   }
 
   void _clearSponsorBlockTracking() {
@@ -1728,13 +1717,13 @@ class _MediaBarState extends State<MediaBar>
   }
 
   bool _supportsEmbeddedYouTubePreview() {
-    // Prefer the iframe on every WebView platform (Android incl. TV); when no
-    // WebView is available it reports unavailable and Media3 is the fallback.
-    return _embeddedYouTubeAvailable &&
-        (PlatformDetection.isWeb ||
-            PlatformDetection.isAndroid ||
-            PlatformDetection.isIOS ||
-            PlatformDetection.isMacOS);
+    return usesEmbeddedYouTubeForInlinePreview(
+      available: _embeddedYouTubeAvailable,
+      isAndroid: PlatformDetection.isAndroid,
+      isWeb: PlatformDetection.isWeb,
+      isIOS: PlatformDetection.isIOS,
+      isMacOS: PlatformDetection.isMacOS,
+    );
   }
 
   void _handleEmbeddedYouTubeUnavailable() {
@@ -1858,7 +1847,6 @@ class _MediaBarState extends State<MediaBar>
       ServerType.jellyfin => JellyfinPlugin(client).createStreamResolver(),
       ServerType.emby => EmbyPlugin(client).createStreamResolver(),
       ServerType.plex => PlexMediaStreamResolver(client),
-      ServerType.silo => siloPluginFor(client).createStreamResolver(),
     };
   }
 
@@ -2082,8 +2070,9 @@ class _MediaBarState extends State<MediaBar>
                   AnimatedOpacity(
                     opacity: hasVisibleTrailerVideo ? 0 : 1,
                     duration: const Duration(milliseconds: 250),
-                    child: _fadeBackdropBottom(
-                      _BackdropLayer(items: items, currentIndex: _currentIndex),
+                    child: _BackdropLayer(
+                      items: items,
+                      currentIndex: _currentIndex,
                     ),
                   ),
                   ..._buildVideoOverlays(allowPersistentMedia3: true),
@@ -2105,33 +2094,14 @@ class _MediaBarState extends State<MediaBar>
                       left: logoLeftInset,
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
-                        child: Column(
+                        child: SizedBox(
                           key: ValueKey('logo_${currentItem.itemId}'),
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: MediaBar.logoBoxWidth,
-                              height: 120,
-                              child: _buildLogoWithShadow(
-                                currentItem.logoUrl,
-                                currentItem.title,
-                              ),
-                            ),
-                            if (currentItem.newRelease case final release?) ...[
-                              const SizedBox(height: 8),
-                              // Wider than the logo, so the label still fits
-                              // on one row in a longer language.
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: MediaBar.logoBoxWidth * 1.6,
-                                ),
-                                child: MediaBarNewReleaseLine(
-                                  release: release,
-                                ),
-                              ),
-                            ],
-                          ],
+                          width: MediaBar.logoBoxWidth,
+                          height: 120,
+                          child: _buildLogoWithShadow(
+                            currentItem.logoUrl,
+                            currentItem.title,
+                          ),
                         ),
                       ),
                     ),
@@ -2191,8 +2161,6 @@ class _MediaBarState extends State<MediaBar>
                                 ),
                               _SlideInfo(
                                 item: currentItem,
-                                // Desktop and TV carry it under the logo.
-                                showRelease: isMobile && !isTablet,
                                 ratings: widget.viewModel.ratingsFor(
                                   currentItem.itemId,
                                 ),
@@ -2220,11 +2188,7 @@ class _MediaBarState extends State<MediaBar>
                       ),
                     ),
                   if (items.length > 1 && !PlatformDetection.useMobileUi)
-                    ..._buildNavArrows(
-                      context,
-                      items.length,
-                      leftInset: _sidebarInset,
-                    ),
+                    ..._buildNavArrows(context, items.length),
                 ],
               ),
             ),
@@ -2300,14 +2264,12 @@ class _MediaBarState extends State<MediaBar>
                     AnimatedOpacity(
                       opacity: hasVisibleTrailerVideo ? 0 : 1,
                       duration: const Duration(milliseconds: 250),
-                      child: _fadeBackdropBottom(
-                        _BackdropLayer(
-                          items: items,
-                          currentIndex: _currentIndex,
-                          zoomDuration: Duration(
-                            milliseconds: widget.prefs.get(
-                              UserPreferences.mediaBarIntervalMs,
-                            ),
+                      child: _BackdropLayer(
+                        items: items,
+                        currentIndex: _currentIndex,
+                        zoomDuration: Duration(
+                          milliseconds: widget.prefs.get(
+                            UserPreferences.mediaBarIntervalMs,
                           ),
                         ),
                       ),
@@ -2405,7 +2367,7 @@ class _MediaBarState extends State<MediaBar>
                               contentHeight * 0.56,
                             );
                         return Positioned(
-                          left: isMobile ? null : 50 + _sidebarInset,
+                          left: isMobile ? null : 50,
                           top: isMobile ? mobileLogoTop : logoTop,
                           child: AnimatedOpacity(
                             opacity: _isTrailerPlaying ? 0 : 1,
@@ -2420,31 +2382,16 @@ class _MediaBarState extends State<MediaBar>
                                           duration: const Duration(
                                             milliseconds: 300,
                                           ),
-                                          child: Column(
+                                          child: SizedBox(
                                             key: ValueKey(
                                               'makd_logo_${currentItem.itemId}',
                                             ),
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              SizedBox(
-                                                width: mobileLogoWidth,
-                                                height: mobileLogoHeight,
-                                                child: _buildLogoWithShadow(
-                                                  currentItem.logoUrl,
-                                                  currentItem.title,
-                                                ),
-                                              ),
-                                              if (currentItem.newRelease
-                                                  case final release?) ...[
-                                                const SizedBox(height: 8),
-                                                MediaBarNewReleaseLine(
-                                                  release: release,
-                                                  showMessage: false,
-                                                  alignment:
-                                                      CrossAxisAlignment.center,
-                                                ),
-                                              ],
-                                            ],
+                                            width: mobileLogoWidth,
+                                            height: mobileLogoHeight,
+                                            child: _buildLogoWithShadow(
+                                              currentItem.logoUrl,
+                                              currentItem.title,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -2453,35 +2400,16 @@ class _MediaBarState extends State<MediaBar>
                                       duration: const Duration(
                                         milliseconds: 300,
                                       ),
-                                      child: Column(
+                                      child: SizedBox(
                                         key: ValueKey(
                                           'makd_logo_${currentItem.itemId}',
                                         ),
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          SizedBox(
-                                            width: logoWidth,
-                                            height: logoHeight,
-                                            child: _buildLogoWithShadow(
-                                              currentItem.logoUrl,
-                                              currentItem.title,
-                                            ),
-                                          ),
-                                          if (currentItem.newRelease
-                                              case final release?) ...[
-                                            const SizedBox(height: 8),
-                                            ConstrainedBox(
-                                              constraints: BoxConstraints(
-                                                maxWidth: logoWidth,
-                                              ),
-                                              child: MediaBarNewReleaseLine(
-                                                release: release,
-                                              ),
-                                            ),
-                                          ],
-                                        ],
+                                        width: logoWidth,
+                                        height: logoHeight,
+                                        child: _buildLogoWithShadow(
+                                          currentItem.logoUrl,
+                                          currentItem.title,
+                                        ),
                                       ),
                                     ),
                             ),
@@ -2491,7 +2419,7 @@ class _MediaBarState extends State<MediaBar>
                     ),
                   if (currentItem != null)
                     Positioned(
-                      left: isMobile ? 0 : 50 + _sidebarInset,
+                      left: isMobile ? 0 : 50,
                       right: isMobile ? 0 : null,
                       bottom: isMobile ? 24 : 20 + widget.rowPeek,
                       child: AnimatedOpacity(
@@ -2563,8 +2491,7 @@ class _MediaBarState extends State<MediaBar>
                     ..._buildNavArrows(
                       context,
                       items.length,
-                      leftInset: _sidebarInset,
-                      rightInset: 44,
+                      nextRightInset: 44,
                     ),
                 ],
               ),
@@ -2721,7 +2648,6 @@ class _MediaBarState extends State<MediaBar>
             activeRatings: activeRatings,
             activeTrailer: activeTrailer,
             trailerActive: trailerVisible,
-            leftInset: _sidebarInset,
           );
 
     return MouseRegion(
@@ -2859,9 +2785,6 @@ class _MediaBarState extends State<MediaBar>
             focusExpansionEnabled: widget.prefs.get(
               UserPreferences.cardFocusExpansion,
             ),
-            navArrows: items.length > 1 && PlatformDetection.useDesktopUi
-                ? _buildNavArrows(context, items.length)
-                : const <Widget>[],
             trailerOverlay: trailerOverlays.isEmpty
                 ? null
                 : Stack(fit: StackFit.expand, children: trailerOverlays),
@@ -3294,6 +3217,48 @@ class _KenBurnsImageState extends State<_KenBurnsImage>
   }
 }
 
+class _NavArrow extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onTap;
+
+  const _NavArrow({required this.icon, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          canRequestFocus: false,
+          customBorder: const CircleBorder(),
+          child: AnimatedOpacity(
+            opacity: onTap != null ? 1.0 : 0.3,
+            duration: const Duration(milliseconds: 200),
+            child: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColorScheme.scrim.withValues(alpha: 0.4),
+                border: Border.fromBorderSide(
+                  ThemeRegistry.active.borders.cardBorder,
+                ),
+              ),
+              child: Icon(
+                icon,
+                color: AppColorScheme.onSurface.withValues(alpha: 0.9),
+                size: 28,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SlideInfo extends StatelessWidget {
   final MediaBarSlideItem item;
   final Map<String, double> ratings;
@@ -3307,12 +3272,8 @@ class _SlideInfo extends StatelessWidget {
   final double leftInset;
   final double rightInset;
 
-  /// The new release label, on its own first line of the card.
-  final bool showRelease;
-
   const _SlideInfo({
     required this.item,
-    this.showRelease = false,
     required this.ratings,
     required this.enableAdditionalRatings,
     required this.enabledRatings,
@@ -3348,11 +3309,6 @@ class _SlideInfo extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (showRelease && !compact)
-            if (item.newRelease case final release?) ...[
-              MediaBarNewReleaseLine(release: release, showMessage: false),
-              const SizedBox(height: 6),
-            ],
           _MetadataRow(item: item),
           if (!compact &&
               (ratings.isNotEmpty ||

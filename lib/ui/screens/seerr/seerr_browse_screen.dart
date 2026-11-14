@@ -22,7 +22,6 @@ import '../../util/error_message.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../widgets/quick_return_wrapper.dart';
 import '../../widgets/skeleton/skeleton_library_grid.dart';
-import '../../../preference/seerr_preferences.dart';
 
 const _tmdbPosterBase = 'https://image.tmdb.org/t/p/w342';
 Color get _navyBackground => AppColorScheme.background;
@@ -327,7 +326,7 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
                             ? null
                             : () => setState(() => _focusedItem = null),
                     onTap: () {
-                      final mt = item.mediaType ?? _vm!.mediaType;
+                      final mt = item.mediaType ?? widget.mediaType ?? 'movie';
                       context.push(
                         Destinations.seerrMedia(
                           item.id.toString(),
@@ -1072,24 +1071,6 @@ class _SeerrSortDialogState extends State<_SeerrSortDialog> {
   ) {
     final divider = Divider(color: AppColorScheme.onSurface.withAlpha(20));
     return [
-      if (vm.filterType == 'genre' || vm.filterType == 'keyword') ...[
-        divider,
-        _sectionHeader(l10n.type),
-        for (final (type, label) in [
-          ('movie', l10n.movies),
-          ('tv', l10n.tvShows),
-        ])
-          _radioTile(
-            label: label,
-            selected: vm.mediaType == type,
-            onTap: () {
-              if (_popped) return;
-              _popped = true;
-              vm.setMediaType(type);
-              Navigator.of(context).pop();
-            },
-          ),
-      ],
       if (vm.filterGenres.isNotEmpty) ...[
         divider,
         _expanderTile(
@@ -1404,7 +1385,7 @@ class _SeerrSettingsDialogState extends State<_SeerrSettingsDialog> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
               child: Text(
-                seerrBrand(l10n.seerrSettings),
+                l10n.seerrSettings,
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w600,

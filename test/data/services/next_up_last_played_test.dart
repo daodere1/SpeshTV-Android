@@ -138,7 +138,7 @@ void main() {
     expect(seriesLookups, isEmpty);
   });
 
-  test('an episode added after the last play sorts by when it was added',
+  test('an added episode does not override viewing activity',
       () async {
     nextUp.complete({
       'Items': [episode('s-recent', addedToday)],
@@ -146,7 +146,7 @@ void main() {
 
     final row = await RowDataSource(client).loadNextUp('server');
 
-    expect(sortDateOf(row, 's-recent'), DateTime.parse(addedToday));
+    expect(sortDateOf(row, 's-recent'), DateTime.parse(lastNight));
   });
 
   test('a series outside the recent plays is looked up on its own', () async {

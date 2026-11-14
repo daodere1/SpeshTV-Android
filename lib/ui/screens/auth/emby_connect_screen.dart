@@ -1,3 +1,5 @@
+import '../../widgets/spesh_brand.dart';
+import 'package:custom_tv_text_field/custom_tv_text_field.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -214,7 +216,8 @@ class _EmbyConnectScreenState extends State<EmbyConnectScreen> {
       maxWidth: 700,
       header: Padding(
         padding: const EdgeInsets.only(bottom: 24),
-        child: Image.asset('assets/images/logo_and_text.png', height: 80),
+        child: speshWeb ? const SpeshBrand(height: 80)
+            : Image.asset('assets/images/logo_and_text.png', height: 80),
       ),
       footer: AnimatedContainer(
         duration: const Duration(milliseconds: 180),

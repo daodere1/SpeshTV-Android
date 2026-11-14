@@ -6,7 +6,6 @@ void main() {
   tearDown(() {
     PlatformDetection.setInterfaceLayout(InterfaceLayout.automatic);
     PlatformDetection.setTvMode(false);
-    PlatformDetection.setSupportsTouchLayout(true);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -24,17 +23,6 @@ void main() {
     expect(PlatformDetection.isTV, isFalse);
     expect(PlatformDetection.useMobileUi, isTrue);
     expect(PlatformDetection.useLeanbackUi, isFalse);
-  });
-
-  test("phone is ignored on a remote-only TV, which couldn't get back", () {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    PlatformDetection.setTvMode(true);
-    PlatformDetection.setSupportsTouchLayout(false);
-    PlatformDetection.setInterfaceLayout(InterfaceLayout.phone);
-    expect(PlatformDetection.isTV, isTrue);
-    expect(PlatformDetection.useLeanbackUi, isTrue);
-    expect(PlatformDetection.useMobileUi, isFalse);
-    expect(PlatformDetection.canUsePhoneLayout, isFalse);
   });
 
   test('tv puts a desktop in the leanback UI', () {

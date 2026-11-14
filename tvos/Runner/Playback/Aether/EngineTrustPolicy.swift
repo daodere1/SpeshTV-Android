@@ -1,4 +1,4 @@
-// Shared by every Apple target. tvOS calls this from NativeApplePlayerChannel, iOS
+// Shared by every Apple target. tvOS calls this from AppleTvVideoChannel, iOS
 // and macOS from AetherVideoChannel, and the policy is the same either way.
 import AetherEngine
 import Foundation

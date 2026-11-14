@@ -40,6 +40,9 @@ import '../../../navigation/playback_launcher.dart';
 import '../../../widgets/horizontal_scroll_section.dart';
 import '../../../widgets/live_tv/incomplete_recording.dart';
 import '../../../widgets/logo_view.dart';
+import '../../../widgets/spesh_brand.dart';
+import '../../../widgets/spesh_season_selector.dart';
+import '../../../widgets/spesh_episode_filters.dart';
 import '../../../widgets/marquee_text.dart';
 import '../../../widgets/media_card.dart';
 import '../../../widgets/rating_display.dart';
@@ -272,7 +275,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
   final FocusNode _episodesFirstFocusNode = FocusNode(debugLabel: 'episodesFirst');
   final FocusNode _episodesCurrentFocusNode = FocusNode(debugLabel: 'episodesCurrent');
   final FocusNode _overviewFocusNode = FocusNode(debugLabel: 'overview');
-  final FocusNode _booksFirstFocusNode = FocusNode(debugLabel: 'booksFirst');
   final FocusNode _personMoviesFirstFocusNode = FocusNode(debugLabel: 'personMoviesFirst');
   final FocusNode _personSeriesFirstFocusNode = FocusNode(debugLabel: 'personSeriesFirst');
   final FocusNode _personSeerrAppearancesFirstFocusNode = FocusNode(debugLabel: 'personSeerrAppearancesFirst');
@@ -513,7 +515,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
     _reviewsFirstFocusNode.onKeyEvent = leftToSidebarHandler;
     _seasonsFirstFocusNode.onKeyEvent = leftToSidebarHandler;
     _episodesFirstFocusNode.onKeyEvent = leftToSidebarHandler;
-    _booksFirstFocusNode.onKeyEvent = leftToSidebarHandler;
     _personMoviesFirstFocusNode.onKeyEvent = leftToSidebarHandler;
     _personSeriesFirstFocusNode.onKeyEvent = leftToSidebarHandler;
     _personSeerrAppearancesFirstFocusNode.onKeyEvent = leftToSidebarHandler;
@@ -549,7 +550,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
     attachAutoScroll(_seasonsFirstFocusNode);
     attachAutoScroll(_episodesFirstFocusNode);
     attachAutoScroll(_episodesCurrentFocusNode);
-    attachAutoScroll(_booksFirstFocusNode);
 
     for (final cat in extraCategoriesOrder) {
       final node = FocusNode(debugLabel: 'modernFeatureFirst_$cat');
@@ -711,7 +711,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
     _episodesFirstFocusNode.dispose();
     _episodesCurrentFocusNode.dispose();
     _overviewFocusNode.dispose();
-    _booksFirstFocusNode.dispose();
     _personMoviesFirstFocusNode.dispose();
     _personSeriesFirstFocusNode.dispose();
     _personSeerrAppearancesFirstFocusNode.dispose();
@@ -905,8 +904,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
                 _personSeriesFirstFocusNode.requestFocus();
               }
               break;
-            case 'books':
-              _booksFirstFocusNode.requestFocus();
             case 'other':
               _otherFirstFocusNode.requestFocus();
               break;
@@ -1091,11 +1088,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
           ...extraTabs,
           if (hasSimilar) similar,
         ];
-      case 'BookSeries':
-        final booksList = _vm.seriesBooks;
-        return [
-          _ModernTab('books', l10n.books, (context, item) => _mediaGrid(context, booksList, firstFocusNode: _booksFirstFocusNode)),
-        ];
       case 'MusicAlbum':
       case 'Playlist':
       case 'AudioBook':
@@ -1125,9 +1117,9 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
           if (series.isNotEmpty)
             _ModernTab('series', l10n.series, (context, item) => _seriesTab(context, series)),
           if (sortedSeerrAppearances.isNotEmpty)
-            _ModernTab('seerrAppearances', seerrBrand(l10n.appearancesSeerr), (context, item) => _seerrAppearancesTab(context, sortedSeerrAppearances)),
+            _ModernTab('seerrAppearances', l10n.appearancesSeerr, (context, item) => _seerrAppearancesTab(context, sortedSeerrAppearances)),
           if (sortedSeerrCrewCredits.isNotEmpty)
-            _ModernTab('seerrCrewContributions', seerrBrand(l10n.crewContributionsSeerr), (context, item) => _seerrCrewCreditsTab(context, sortedSeerrCrewCredits)),
+            _ModernTab('seerrCrewContributions', l10n.crewContributionsSeerr, (context, item) => _seerrCrewCreditsTab(context, sortedSeerrCrewCredits)),
           if (movies.isEmpty && series.isEmpty && sortedSeerrAppearances.isEmpty && sortedSeerrCrewCredits.isEmpty && _vm.filmography.isNotEmpty)
             _ModernTab('appearances', l10n.appearances, (_, _) => _itemGrid(_sortJellyfinItems(_vm.filmography))),
         ];
@@ -1358,6 +1350,8 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
     // unplayed episode's seasonId so the cyan border always renders correctly.
     final nextUpSeasonId = _vm.nextUp?.seasonId ??
         _vm.seriesEpisodes.firstWhereOrNull((e) => !e.isPlayed)?.seasonId;
+    final showAvailabilityBadges =
+        widget.prefs.get(UserPreferences.showSeerrAvailabilityBadges);
     final seerrSeasonStatus = seerrItemSeasonStatus(_vm);
     // Set only for a series with no season to open, where the card offers to
     // request that season instead.
@@ -1393,7 +1387,9 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
       );
 
       return SeasonCard(
-        seerrStatus: seerrSeasonStatus[season.indexNumber],
+        seerrStatus: showAvailabilityBadges
+            ? seerrSeasonStatus[season.indexNumber]
+            : null,
         badge: AnimeSeasonAudioBadge(
           seriesId: season.seriesId,
           seasonId: season.id,
@@ -1576,6 +1572,9 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
   }
 
   final Set<int> _expandedSeasons = {};
+  int? _selectedSpeshSeason;
+  SpeshEpisodeFilter _speshEpisodeFilter = SpeshEpisodeFilter.all;
+  final GlobalKey _speshNextEpisodeKey = GlobalKey();
   bool _initializedExpandedSeasons = false;
 
   /// All episodes of a Series grouped into collapsible season containers.
@@ -1610,10 +1609,67 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
       }
     }
 
+    if (speshWeb && !seasonGroups.containsKey(_selectedSpeshSeason)) {
+      final nextSeason = _vm.nextUp?.parentIndexNumber;
+      _selectedSpeshSeason = seasonGroups.containsKey(nextSeason)
+          ? nextSeason : seasonGroups.keys.first;
+      _expandedSeasons.add(_selectedSpeshSeason!);
+    }
+
     final children = <Widget>[];
+    final nextEpisode = sorted.firstWhereOrNull((e) => e.id == _vm.nextUp?.id)
+        ?? sorted.firstWhereOrNull((e) => !e.isPlayed);
+    if (speshWeb) {
+      children.add(Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: SpeshSeasonSelector(
+          selected: _selectedSpeshSeason!, label: l10n.seasons,
+          options: {for (final entry in seasonGroups.entries)
+            entry.key: '${l10n.seasonNumber(entry.key)} - '
+              '${entry.value.where((e) => e.isPlayed).length}/${entry.value.length} watched'},
+          onChanged: (season) {
+            setState(() {
+              _selectedSpeshSeason = season;
+              _expandedSeasons..clear()..add(season);
+            });
+          },
+        ),
+      ));
+      children.add(Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: SpeshEpisodeFilters(selected: _speshEpisodeFilter,
+          onChanged: (filter) => setState(() {
+            _speshEpisodeFilter = filter;
+            if (_selectedSpeshSeason != null) _expandedSeasons.add(_selectedSpeshSeason!);
+          }),
+          onJump: nextEpisode == null ? null : () {
+            final season = nextEpisode.parentIndexNumber ?? 0;
+            setState(() {
+              _selectedSpeshSeason = season;
+              _speshEpisodeFilter = SpeshEpisodeFilter.all;
+              _expandedSeasons..clear()..add(season);
+            });
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) {
+                return;
+              }
+              final target = _speshNextEpisodeKey.currentContext;
+              if (target != null) {
+                Scrollable.ensureVisible(target,
+                  duration: const Duration(milliseconds: 250), alignment: 0.15);
+              }
+            });
+          },
+        ),
+      ));
+    }
     for (final entry in seasonGroups.entries) {
       final season = entry.key;
+      if (speshWeb && season != _selectedSpeshSeason) continue;
       final eps = entry.value;
+      final visibleEpisodes = speshWeb ? eps.where((episode) => matchesEpisodeFilter(
+        _speshEpisodeFilter, played: episode.isPlayed,
+        position: episode.playbackPosition ?? Duration.zero)).toList() : eps;
       final isExpanded = _expandedSeasons.contains(season);
       final isFirst = children.isEmpty;
 
@@ -1653,7 +1709,9 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    '(${eps.length})',
+                    speshWeb
+                        ? '${eps.where((e) => e.isPlayed).length}/${eps.length} watched'
+                        : '(${eps.length})',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.white38,
                         ),
@@ -1671,17 +1729,24 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
             padding: const EdgeInsets.only(left: 12, bottom: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: eps.map((episode) {
+              children: [
+                if (speshWeb && visibleEpisodes.isEmpty) const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text('No episodes match this filter.'),
+                ),
+                ...visibleEpisodes.map((episode) {
                 return Padding(
+                  key: speshWeb && identical(episode, nextEpisode) ? _speshNextEpisodeKey : null,
                   padding: const EdgeInsets.only(bottom: 8),
                   child: DetailEpisodeCard(
                     episode: episode,
                     imageApi: _vm.imageApi,
                     onChanged: () => _vm.load(),
-                    isActive: episode.id == _vm.nextUp?.id,
+                    isActive: episode.id == (speshWeb ? nextEpisode?.id : _vm.nextUp?.id),
                   ),
                 );
-              }).toList(),
+              }),
+              ],
             ),
           ),
         );
@@ -1742,15 +1807,12 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
 
   Widget _crewTab(BuildContext context, AggregatedItem item) {
     final l10n = AppLocalizations.of(context);
-    final isEpisode = item.type == 'Episode';
-    final fallbackDirector = isEpisode ? l10n.episodeDirector : l10n.director;
-    final fallbackWriter = isEpisode ? l10n.episodeWriter : l10n.writer;
     final Map<String, Map<String, dynamic>> merged = {};
     for (final d in _vm.directors) {
       final id = d['Id']?.toString() ?? d['Name']?.toString() ?? '';
       if (id.isEmpty) continue;
       final roleStr = d['Role']?.toString().trim();
-      final role = (roleStr != null && roleStr.isNotEmpty) ? roleStr : fallbackDirector;
+      final role = (roleStr != null && roleStr.isNotEmpty) ? roleStr : l10n.director;
       merged[id] = {
         ...d,
         'Roles': <String>{role},
@@ -1760,7 +1822,7 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
       final id = w['Id']?.toString() ?? w['Name']?.toString() ?? '';
       if (id.isEmpty) continue;
       final roleStr = w['Role']?.toString().trim();
-      final role = (roleStr != null && roleStr.isNotEmpty) ? roleStr : fallbackWriter;
+      final role = (roleStr != null && roleStr.isNotEmpty) ? roleStr : l10n.writer;
       if (merged.containsKey(id)) {
         final roles = merged[id]!['Roles'] as Set<String>;
         roles.add(role);
@@ -2383,9 +2445,7 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
                 return FocusableWrapper(
                   focusNode: index == 0 ? _studiosFirstFocusNode : null,
                   onSelect: name.isNotEmpty
-                      ? () => context.push(
-                          Destinations.studio(name, serverId: item.serverId),
-                        )
+                      ? () => context.push(Destinations.studio(name))
                       : null,
                   borderRadius: 12,
                   suppressFocusGlow: true,
@@ -3528,7 +3588,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
             itemBuilder: (context, i) {
               final entry = items[i];
               return MediaCard(
-                posterBadgeItemId: entry.id,
                 title: entry.name,
                 titleColor: titleColor,
                 focusNode: i == 0 ? (focusNode ?? _gridFirstFocusNode) : null,
@@ -3579,12 +3638,10 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
       showContextMenu(
         context,
         entry,
-        collectionRemoval: _vm.canRemoveFromCollection
-            ? CollectionRemovalContext(
-                collectionName: _vm.item?.name ?? '',
-                remove: _vm.removeFromCollection,
-              )
-            : null,
+        collectionRemoval: CollectionRemovalContext(
+          collectionName: _vm.item?.name ?? '',
+          remove: _vm.removeFromCollection,
+        ),
         onChanged: () {
           if (mounted) setState(() {});
         },
@@ -3647,7 +3704,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
                         entry.id.startsWith('tmdb:') || entry.serverId == 'seerr';
                     final topRow = i < columns;
                     return MediaCard(
-                      posterBadgeItemId: isSeerrItem ? null : entry.id,
                       title: entry.name,
                       titleColor: titleColor,
                       imageUrl: _imageUrl(entry),
@@ -4140,9 +4196,6 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
     AggregatedItem item,
     List<_ModernTab> tabs,
   ) {
-    final series = item.type == 'BookSeries' ? item : null;
-    item = _vm.seriesFeaturedBook ?? item;
-
     final textTheme = Theme.of(context).textTheme;
     final isEpisode = item.type == 'Episode';
     final isSeason = item.type == 'Season';
@@ -4314,13 +4367,9 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
         ),
       );
 
-      final authorOrArtistName = series == null
-          ? isBookLayout
-              ? (_getAuthorName(item) ?? item.albumArtist)
-              : item.albumArtist
-          : item.name;
-
-      final itemName = series?.name ?? item.name;
+      final authorOrArtistName = isBookLayout
+          ? (_getAuthorName(item) ?? item.albumArtist)
+          : item.albumArtist;
 
       final playlistInfo = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4331,7 +4380,7 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
               maxWidth: _landscape ? 600 : (MediaQuery.sizeOf(context).width - 40),
             ),
             child: MarqueeText(
-              text: itemName,
+              text: item.name,
               style: textTheme.displaySmall?.copyWith(
                 fontWeight: FontWeight.w700,
                 color: _titleColor,
@@ -5006,7 +5055,7 @@ class _ModernDetailContentState extends State<ModernDetailContent> {
     final title = code != null ? '$code - ${episode.name}' : episode.name;
     final combinedLabel = customLabel != null
         ? '$customLabel - ${episode.name}'
-        : '${l10n.nextUp} - $title';
+        : '${speshWeb && !episode.isPlayed && (episode.playbackPosition ?? Duration.zero) > Duration.zero ? l10n.resume : l10n.nextUp} - $title';
     final progress = (episode.playedPercentage ?? 0) / 100.0;
     final hideOverview = hidesMediaDescription(
       itemType: episode.type,

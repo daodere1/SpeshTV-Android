@@ -6,7 +6,7 @@ body:
   - type: input
     id: app_version
     attributes:
-      label: Moonfin version
+      label: SpeshTV version
       description: The app version / release tag (e.g., 1.0.0)
       placeholder: 1.0.0
     validations:
@@ -44,17 +44,6 @@ body:
       description: "e.g. Pixel 8, iPhone 15, MacBook Air M2, etc."
     validations:
       required: false
-
-  - type: dropdown
-    id: server_type
-    attributes:
-      label: Server
-      description: The media server Moonfin is signed in to
-      options:
-        - Jellyfin
-        - Emby
-    validations:
-      required: true
 
   - type: dropdown
     id: connection_type
@@ -110,7 +99,5 @@ body:
     id: logs
     attributes:
       label: Logs / extra context (optional)
-      description: |
-        Paste a diagnostic log here if you have one. The [Collecting Logs](https://github.com/Moonfin-Client/Moonfin-Core/wiki/Collecting-Logs) wiki page has the steps.
     validations:
       required: false

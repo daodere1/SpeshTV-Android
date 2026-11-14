@@ -31,7 +31,7 @@ double tvPx(double px) => px / kTvTargetScale;
 /// How much to magnify the design canvas to fill a panel [realWidth] points
 /// across. One means the panel is already the design canvas.
 double tvUiScaleFor(double realWidth) =>
-    realWidth <= 0 ? 1.0 : realWidth / kTvDesignWidth;
+    !realWidth.isFinite || realWidth <= 0 ? 1.0 : realWidth / kTvDesignWidth;
 
 /// The canvas a panel of [realSize] lays out on. Always [kTvDesignWidth]
 /// across, whatever density the platform reported.
@@ -65,20 +65,38 @@ class TvUiScale extends StatelessWidget {
           insets.right / scale,
           insets.bottom / scale,
         );
-    return FittedBox(
-      fit: BoxFit.fill,
-      child: SizedBox(
-        width: logicalSize.width,
-        height: logicalSize.height,
-        child: MediaQuery(
-          data: mq.copyWith(
-            size: logicalSize,
-            devicePixelRatio: mq.devicePixelRatio * scale,
-            padding: scaleInsets(mq.padding, zeroTop: true),
-            viewPadding: scaleInsets(mq.viewPadding, zeroTop: true),
-            viewInsets: scaleInsets(mq.viewInsets),
+    if (!realSize.width.isFinite ||
+        !realSize.height.isFinite ||
+        realSize.width <= 0 ||
+        realSize.height <= 0) {
+      return const SizedBox.shrink();
+    }
+    // An explicit scale stays finite during route and keyboard transitions;
+    // FittedBox derives a matrix from paint bounds, including empty frames.
+    return ClipRect(
+      child: Transform.scale(
+        scale: scale,
+        alignment: Alignment.topLeft,
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minWidth: logicalSize.width,
+          maxWidth: logicalSize.width,
+          minHeight: logicalSize.height,
+          maxHeight: logicalSize.height,
+          child: SizedBox(
+            width: logicalSize.width,
+            height: logicalSize.height,
+            child: MediaQuery(
+              data: mq.copyWith(
+                size: logicalSize,
+                devicePixelRatio: mq.devicePixelRatio * scale,
+                padding: scaleInsets(mq.padding, zeroTop: true),
+                viewPadding: scaleInsets(mq.viewPadding, zeroTop: true),
+                viewInsets: scaleInsets(mq.viewInsets),
+              ),
+              child: child,
+            ),
           ),
-          child: child,
         ),
       ),
     );

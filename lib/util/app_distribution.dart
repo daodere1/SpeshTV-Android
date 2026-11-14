@@ -2,8 +2,10 @@
 /// `--dart-define=DISTRIBUTION_CHANNEL=<value>` when building.
 ///
 /// Supported values:
-///   apk            : Android sideload APK (phones, tablets and TVs)
+///   apk            : Android sideload APK (mobile)
 ///   aab            : Android App Bundle / Play Store
+///   android_tv_apk : Android TV sideload APK
+///   android_tv_aab : Android TV App Bundle / Play Store
 ///   macos_dmg      : macOS DMG (GitHub direct download)
 ///   macos_pkg      : macOS App Store PKG
 ///   windows        : Windows installer EXE
@@ -20,6 +22,8 @@ import 'package:flutter/foundation.dart';
 enum DistributionChannel {
   apk,
   aab,
+  androidTvApk,
+  androidTvAab,
   macosDmg,
   macosPkg,
   windows,
@@ -43,6 +47,10 @@ class AppDistribution {
         return DistributionChannel.apk;
       case 'aab':
         return DistributionChannel.aab;
+      case 'android_tv_apk':
+        return DistributionChannel.androidTvApk;
+      case 'android_tv_aab':
+        return DistributionChannel.androidTvAab;
       case 'macos_dmg':
         return DistributionChannel.macosDmg;
       case 'macos_pkg':
@@ -73,6 +81,7 @@ class AppDistribution {
   static bool get supportsInAppUpdates {
     switch (channel) {
       case DistributionChannel.apk:
+      case DistributionChannel.androidTvApk:
       case DistributionChannel.macosDmg:
       case DistributionChannel.windows:
       case DistributionChannel.linux:

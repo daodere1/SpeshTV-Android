@@ -12,8 +12,6 @@ import '../../auth/repositories/user_repository.dart';
 import '../../auth/store/authentication_store.dart';
 import '../../auth/store/credential_store.dart';
 import '../../data/repositories/anime_marker_repository.dart';
-import '../../data/repositories/calendar_repository.dart';
-import '../../data/repositories/poster_badge_repository.dart';
 import '../../data/repositories/mdblist_repository.dart';
 import '../../data/repositories/multi_server_repository.dart';
 import '../../data/repositories/media_bar_repository.dart';
@@ -51,7 +49,6 @@ import '../../data/services/retro_artwork/retro_artwork_disk_cache.dart';
 import '../../data/services/connectivity_service.dart';
 import '../../data/services/custom_external_lists_service.dart';
 import '../../data/services/download_service.dart';
-import '../../data/services/item_membership_service.dart';
 import '../../data/services/remove_watched_service.dart';
 import '../../data/services/row_data_source.dart';
 import '../../data/services/socket_handler.dart';
@@ -70,9 +67,6 @@ import '../../ui/navigation/destinations.dart';
 import '../../ui/screensaver/screensaver_controller.dart';
 import '../../ui/screens/home/home_view_model.dart';
 import '../../ui/screens/setup/setup_wizard_gate.dart';
-import '../../ui/widgets/finished_download_dialog.dart';
-import '../../watch_party/silo_watch_party_manager.dart';
-import '../../watch_party/watch_party_rooms_service.dart';
 
 final _getIt = GetIt.instance;
 
@@ -92,12 +86,9 @@ void resetUserScopedSingletons() {
   unregister<MediaBarRepository>();
   unregister<TmdbRepository>();
   unregister<MdbListRepository>();
-  unregister<CalendarRepository>();
   unregister<AnimeMarkerRepository>();
-  unregister<PosterBadgeRepository>();
   unregister<RowDataSource>();
   RowDataSource.clearRecommendationCache();
-  ItemMembershipService.instance.clearCache();
   unregister<ItemMutationRepository>();
   unregister<SearchRepository>();
   unregister<UserViewsRepository>();
@@ -107,13 +98,6 @@ void resetUserScopedSingletons() {
   unregister<UpcomingEpisodeService>();
   // Watched state is per user, so the next account must not inherit it.
   userDataSync.reset();
-  // A Watch Party room belongs to the session that joined it.
-  if (_getIt.isRegistered<SiloWatchPartyManager>()) {
-    _getIt<SiloWatchPartyManager>().onSessionChanged();
-  }
-  if (_getIt.isRegistered<WatchPartyRoomsService>()) {
-    _getIt<WatchPartyRoomsService>().reset();
-  }
 
   _registerUserScopedSingletons();
 }
@@ -276,14 +260,17 @@ void registerAppModule() {
             serverId: serverId,
           ),
       signedInServer: () {
+        if (!_getIt.isRegistered<MediaServerClient>()) return null;
         if (_getIt.isRegistered<ConnectivityService>() &&
             !_getIt<ConnectivityService>().canReachServer) {
           return null;
         }
-        return _activeServer();
+        final client = _getIt<MediaServerClient>();
+        return (
+          client: client,
+          serverId: _getIt<MediaServerClientFactory>().serverIdOf(client),
+        );
       },
-      activeServer: _activeServer,
-      askToDelete: askToDeleteFinishedDownload,
       syncInFlight: () =>
           _getIt.isRegistered<ConnectivityService>() &&
           _getIt<ConnectivityService>().isSyncing,
@@ -294,15 +281,6 @@ void registerAppModule() {
   _getIt.registerLazySingleton(() => const ExternalPlayerService());
 
   _registerUserScopedSingletons();
-}
-
-SignedInServer? _activeServer() {
-  if (!_getIt.isRegistered<MediaServerClient>()) return null;
-  final client = _getIt<MediaServerClient>();
-  return (
-    client: client,
-    serverId: _getIt<MediaServerClientFactory>().serverIdOf(client),
-  );
 }
 
 void _registerUserScopedSingletons() {
@@ -346,15 +324,7 @@ void _registerUserScopedSingletons() {
     dispose: (repository) => repository.dispose(),
   );
   _getIt.registerLazySingleton(
-    () => CalendarRepository(_getIt<MediaServerClient>()),
-    dispose: (repository) => repository.dispose(),
-  );
-  _getIt.registerLazySingleton(
     () => AnimeMarkerRepository(_getIt<MediaServerClient>()),
-    dispose: (repository) => repository.dispose(),
-  );
-  _getIt.registerLazySingleton(
-    () => PosterBadgeRepository(_getIt<MediaServerClient>()),
     dispose: (repository) => repository.dispose(),
   );
   _getIt.registerLazySingleton(

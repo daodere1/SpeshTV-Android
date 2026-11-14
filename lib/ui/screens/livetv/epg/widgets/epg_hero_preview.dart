@@ -215,6 +215,7 @@ class EpgHeroPreview extends StatelessWidget {
             text: synopsis!,
             maxLines: 3,
             style: synopsisStyle,
+            millisPerPixel: kLiveTvDescriptionMarqueeMillisPerPixel,
             pauseDurationMs: 1600,
             showDotSeparator: false,
           ),
@@ -273,7 +274,8 @@ class EpgHeroPreview extends StatelessWidget {
             ],
           );
 
-    final content = compact
+    // A stretched artwork row needs finite height in the guide's Column.
+    final content = compact || imagePlate != null
         ? SizedBox(height: compactHeight, child: inner)
         : inner;
 

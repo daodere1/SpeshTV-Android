@@ -17,6 +17,11 @@ and that a hidden child becomes visible when the runner is shown. It also covers
 showing the parent directly (as window_manager can do), showing an already-visible
 runner again, and attaching content after the parent is visible.
 
+It also checks recovery of fully off-screen startup/restored bounds and an
+unreachable title bar, permits an interactive drag until release, preserves
+borderless playback bounds, and recovers normal placement on display changes.
+These assertions use actual Win32 monitor/work-area coordinates.
+
 The unchanged runner fails with `first show left the content hidden`. This
 reproduces the observed native-window state, not the unknown upstream trigger
 that originally hid the Flutter view. A full application startup test is still

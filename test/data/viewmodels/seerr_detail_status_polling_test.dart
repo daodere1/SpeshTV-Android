@@ -52,7 +52,6 @@ class _FakeSeerr extends Fake implements SeerrRepository {
     int? profileId,
     String? rootFolder,
     int? serverId,
-    int? tvdbId,
   }) async => const SeerrRequest(
     id: 1,
     status: SeerrRequest.statusApproved,

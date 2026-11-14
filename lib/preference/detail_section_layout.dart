@@ -14,9 +14,6 @@ const _modern = DetailScreenStyle.modern;
 const _spotlight = DetailScreenStyle.spotlight;
 const _nouveau = DetailScreenStyle.nouveau;
 const _minimalist = DetailScreenStyle.minimalist;
-const _stage = DetailScreenStyle.stage;
-const _premiere = DetailScreenStyle.premiere;
-const _frost = DetailScreenStyle.frost;
 
 /// Where a [DetailSection] sits on the settings screen.
 enum DetailSectionGroup { header, sections, seerr, person, collection, other }
@@ -35,15 +32,11 @@ enum DetailSection {
     _spotlight,
     _nouveau,
     _minimalist,
-    _stage,
-    _premiere,
   }),
   tagline('tagline', Icons.format_quote, DetailSectionGroup.header, {
     _classic,
     _modern,
     _spotlight,
-    _stage,
-    _premiere,
   }),
   poster('poster', Icons.image_outlined, DetailSectionGroup.header, {_classic}),
   versionBadge(
@@ -62,27 +55,18 @@ enum DetailSection {
     _modern,
     _spotlight,
     _nouveau,
-    _stage,
-    _premiere,
-    _frost,
   }),
   crew('crew', Icons.movie_creation_outlined, DetailSectionGroup.sections, {
     _classic,
     _modern,
     _spotlight,
     _nouveau,
-    _stage,
-    _premiere,
-    _frost,
   }),
   studios('studios', Icons.business_outlined, DetailSectionGroup.sections, {
     _classic,
     _modern,
     _spotlight,
     _nouveau,
-    _stage,
-    _premiere,
-    _frost,
   }),
   chapters('chapters', Icons.bookmarks_outlined, DetailSectionGroup.sections, {
     _classic,
@@ -96,21 +80,18 @@ enum DetailSection {
     _spotlight,
     _nouveau,
     _minimalist,
-    _stage,
-    _premiere,
-    _frost,
   }),
   collections(
     'collections',
     Icons.collections_bookmark_outlined,
     DetailSectionGroup.sections,
-    {_classic, _modern, _spotlight, _nouveau, _stage, _premiere},
+    {_classic, _modern, _spotlight, _nouveau},
   ),
   moreLikeThis(
     'moreLikeThis',
     Icons.recommend_outlined,
     DetailSectionGroup.sections,
-    {_classic, _modern, _spotlight, _nouveau, _stage, _premiere, _frost},
+    {_classic, _modern, _spotlight, _nouveau},
   ),
   reviews(
     'reviews',
@@ -122,46 +103,42 @@ enum DetailSection {
     'moreEpisodes',
     Icons.view_list_outlined,
     DetailSectionGroup.sections,
-    {_classic, _modern, _spotlight, _stage, _premiere, _frost},
+    {_classic, _modern, _spotlight},
   ),
   mediaInfo('mediaInfo', Icons.info_outline, DetailSectionGroup.sections, {
     _modern,
     _nouveau,
     _spotlight,
-    _frost,
   }),
   seerrGenresTags(
     'seerrGenresTags',
     Icons.sell_outlined,
     DetailSectionGroup.seerr,
-    {_classic, _modern, _spotlight, _nouveau, _stage, _premiere, _frost},
+    {_classic, _modern, _spotlight, _nouveau},
   ),
   seerrStats('seerrStats', Icons.bar_chart, DetailSectionGroup.seerr, {
     _classic,
     _modern,
     _spotlight,
     _nouveau,
-    _stage,
-    _premiere,
-    _frost,
   }),
   seerrStreaming(
     'seerrStreaming',
     Icons.live_tv_outlined,
     DetailSectionGroup.seerr,
-    {_classic, _modern, _spotlight, _nouveau, _stage, _premiere, _frost},
+    {_classic, _modern, _spotlight, _nouveau},
   ),
   seerrRecommendations(
     'seerrRecommendations',
     Icons.auto_awesome_outlined,
     DetailSectionGroup.seerr,
-    {_classic, _modern, _spotlight, _nouveau, _stage, _premiere, _frost},
+    {_classic, _modern, _spotlight, _nouveau},
   ),
   seerrSimilar(
     'seerrSimilar',
     Icons.grid_view_outlined,
     DetailSectionGroup.seerr,
-    {_classic, _modern, _spotlight, _nouveau, _stage, _premiere, _frost},
+    {_classic, _modern, _spotlight, _nouveau},
   ),
   seerrCollection(
     'seerrCollection',
@@ -234,25 +211,11 @@ enum DetailSection {
 
   /// Whether picking [style] can put this section on screen. Minimalist only
   /// draws video pages and hands every other page to Spotlight, so it also
-  /// shows whatever Spotlight does. Stage, Premiere and Frost hand people and
-  /// collections to Modern the same way, and Quick Look's full page is Modern.
+  /// shows whatever Spotlight does.
   bool isAvailableIn(DetailScreenStyle style) =>
       styles.contains(style) ||
       (style == DetailScreenStyle.minimalist &&
-          styles.contains(DetailScreenStyle.spotlight)) ||
-      (style == DetailScreenStyle.quickLook &&
-          styles.contains(DetailScreenStyle.modern)) ||
-      ((style == DetailScreenStyle.stage ||
-              style == DetailScreenStyle.premiere ||
-              style == DetailScreenStyle.frost) &&
-          _drawnByModern &&
-          styles.contains(DetailScreenStyle.modern));
-
-  bool get _drawnByModern =>
-      group == DetailSectionGroup.person ||
-      group == DetailSectionGroup.collection ||
-      this == DetailSection.seerrPersonAppearances ||
-      this == DetailSection.seerrPersonCrew;
+          styles.contains(DetailScreenStyle.spotlight));
 
   /// Whether this device and server can show it at all. A TV has no browser
   /// to open a person's links in, and reviews need a plugin that serves them.

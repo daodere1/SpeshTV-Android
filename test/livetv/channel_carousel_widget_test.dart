@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:moonfin/data/models/live_tv_recording_state.dart';
-import 'package:moonfin/data/services/user_data_sync.dart';
 import 'package:moonfin/data/viewmodels/live_tv_guide_view_model.dart';
 import 'package:moonfin/ui/theme/app_theme.dart';
 import 'package:moonfin/ui/widgets/live_tv/channel_carousel.dart';
@@ -66,6 +65,8 @@ class _CarouselGuide extends LiveTvGuideViewModel {
     List<String>? initialChannelIds,
     DateTime? windowStart,
     bool livePosition = true,
+    bool forceRefresh = false,
+    int? windowHours,
   }) async {
     _loadedRevision = liveTvRecordingRevision.value;
     duringLoad?.call();
@@ -241,22 +242,6 @@ void main() {
     await tester.pump();
     return vm;
   }
-
-  testWidgets('open carousel cards follow favorite changes', (tester) async {
-    userDataSync.reset();
-    addTearDown(userDataSync.reset);
-    await pumpOverlay(tester);
-    final card = find.byWidgetPredicate(
-      (widget) => widget is ChannelCarouselCard && widget.channelName == 'Channel 10',
-    );
-    expect(tester.widget<ChannelCarouselCard>(card).isFavorite, isFalse);
-    userDataSync.publish('ch10', {'IsFavorite': true});
-    await tester.pump();
-    expect(tester.widget<ChannelCarouselCard>(card).isFavorite, isTrue);
-    userDataSync.publish('ch10', {'IsFavorite': false});
-    await tester.pump();
-    expect(tester.widget<ChannelCarouselCard>(card).isFavorite, isFalse);
-  });
 
   test('the television canvas shows three whole cards and two half ones', () {
     final layout = ChannelCarouselCard.layoutFor(kTvDesignWidth);

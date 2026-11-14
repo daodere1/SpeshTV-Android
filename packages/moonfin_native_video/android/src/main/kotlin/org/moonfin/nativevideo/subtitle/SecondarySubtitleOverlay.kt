@@ -19,25 +19,12 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import kotlin.math.roundToInt
 
-// Where Media3 puts a MOV_TEXT cue when the track sets no position of its own.
-private const val TX3G_DEFAULT_LINE = 0.85f
-
-/**
- * Replace Media3's default SRT alignment margins and its default MOV_TEXT position.
- * Other formats keep their coordinates.
- */
+/** Replace Media3's default SRT alignment margins. Other formats keep their coordinates. */
 internal fun primaryCueWithoutDefaultMargin(cue: Cue, format: Format?): Cue {
     val mime = if (format?.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES)
         format.codecs else format?.sampleMimeType
-    if (cue.bitmap != null || cue.lineType != Cue.LINE_TYPE_FRACTION) return cue
-    if (mime == MimeTypes.APPLICATION_TX3G) {
-        if (cue.line != TX3G_DEFAULT_LINE || cue.lineAnchor != Cue.ANCHOR_TYPE_START) return cue
-        return cue.buildUpon()
-            .setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET)
-            .setLineAnchor(Cue.TYPE_UNSET)
-            .build()
-    }
-    if (mime != MimeTypes.APPLICATION_SUBRIP) return cue
+    if (mime != MimeTypes.APPLICATION_SUBRIP || cue.bitmap != null ||
+        cue.lineType != Cue.LINE_TYPE_FRACTION) return cue
     val edge = when {
         cue.line == 0.08f && cue.lineAnchor == Cue.ANCHOR_TYPE_START -> 0f
         cue.line == 0.92f && cue.lineAnchor == Cue.ANCHOR_TYPE_END -> 1f
@@ -98,8 +85,6 @@ internal class SecondarySubtitleOverlay(
     private var baseStrokeColor = Color.TRANSPARENT
     private var baseFontSize = 20f
     private var baseFontWeight = 400
-    private var baseTypeface: Typeface? = null
-    private var edgeSpan: SubtitleEdgeSpan? = null
     private var embeddedStylesEnabled = true
     private var embeddedFontSizesEnabled = true
     private val measurementPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
@@ -165,7 +150,6 @@ internal class SecondarySubtitleOverlay(
                 .setText(keepSubtitleEmphasis(requireNotNull(cue.text)))
                 .clearWindowColor()
                 .build()
-                .withEdges(edgeSpan)
         }
         if (secondaryCues == null) return
         secondaryCues = retainedSecondaryCues
@@ -181,8 +165,6 @@ internal class SecondarySubtitleOverlay(
         verticalOffset: Float?,
         embeddedStylesEnabled: Boolean = true,
         embeddedFontSizesEnabled: Boolean = true,
-        typeface: Typeface? = null,
-        edgeSpan: SubtitleEdgeSpan? = null,
     ) {
         view.setApplyEmbeddedStyles(embeddedStylesEnabled)
         this.embeddedStylesEnabled = embeddedStylesEnabled
@@ -192,8 +174,6 @@ internal class SecondarySubtitleOverlay(
         baseStrokeColor = strokeColor
         if (fontSize != null) baseFontSize = fontSize
         baseFontWeight = fontWeight
-        baseTypeface = typeface
-        this.edgeSpan = edgeSpan
         if (verticalOffset != null) {
             primaryBottomPaddingFraction = verticalOffset.coerceIn(0f, 0.95f)
         }
@@ -661,7 +641,8 @@ internal class SecondarySubtitleOverlay(
                 0, text.length, Spanned.SPAN_PRIORITY)
         }
         measurementPaint.textSize = fontPx.coerceAtLeast(1f)
-        measurementPaint.typeface = styleTypeface()
+        measurementPaint.typeface = Typeface.create(Typeface.DEFAULT,
+            if (baseFontWeight >= 600) Typeface.BOLD else Typeface.NORMAL)
         // Media3 subtracts its inner padding before applying the authored cue width.
         val padding = (measurementPaint.textSize * 0.125f + 0.5f).toInt()
         val availableWidth = ((width - padding * 2) *
@@ -708,12 +689,8 @@ internal class SecondarySubtitleOverlay(
         clear()
     }
 
-    private fun styleTypeface(): Typeface = baseTypeface ?: Typeface.create(
-        Typeface.DEFAULT,
-        if (baseFontWeight >= 600) Typeface.BOLD else Typeface.NORMAL,
-    )
-
     private fun applyStyle() {
+        val weight = if (baseFontWeight >= 600) Typeface.BOLD else Typeface.NORMAL
         val edgeType = if (baseStrokeColor == Color.TRANSPARENT) {
             CaptionStyleCompat.EDGE_TYPE_NONE
         } else {
@@ -726,7 +703,7 @@ internal class SecondarySubtitleOverlay(
                 Color.TRANSPARENT,
                 edgeType,
                 baseStrokeColor,
-                styleTypeface(),
+                Typeface.create(Typeface.DEFAULT, weight),
             ),
         )
         val size = fontSizeOverride ?: baseFontSize

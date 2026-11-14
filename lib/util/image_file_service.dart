@@ -58,8 +58,17 @@ class BoundedImageFileService extends FileService {
     final priority = takeImageFetchPriority(sent);
     final timing = ArtworkTimings.begin(url);
     final gate = scheduler;
+    var admittedPriority = priority;
     if (gate != null) {
-      final admission = await gate.acquire(url, priority: priority);
+      final ArtworkAdmission admission;
+      try {
+        admission = await gate.acquire(url, priority: priority);
+      } catch (e) {
+        timing?.failed(e);
+        ArtworkTimings.finish(timing);
+        rethrow;
+      }
+      admittedPriority = admission.priority;
       timing?.admitted(
         batch: admission.batch,
         queueDepth: admission.queueDepth,
@@ -71,7 +80,7 @@ class BoundedImageFileService extends FileService {
     void release() {
       if (released) return;
       released = true;
-      gate?.release();
+      gate?.release(priority: admittedPriority);
     }
 
     try {

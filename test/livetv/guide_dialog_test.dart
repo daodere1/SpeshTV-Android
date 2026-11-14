@@ -112,6 +112,7 @@ void main() {
     GetIt.instance.registerSingleton<PlaybackManager>(playback);
 
     client = _MockMediaServerClient();
+    when(() => client.baseUrl).thenReturn('http://server');
     liveTvApi = _MockLiveTvApi();
     when(() => client.liveTvApi).thenReturn(liveTvApi);
     when(() => client.serverType).thenReturn(ServerType.jellyfin);
@@ -389,31 +390,7 @@ void main() {
     );
   });
 
-  testWidgets('in miniPlayerMode a focused channel previews what it airs', (
-    tester,
-  ) async {
-    channels = [_channelRaw('cD', 'Channel D'), _channelRaw('cE', 'Channel E')];
-    programs = [
-      for (final id in ['cD', 'cE'])
-        {
-          ..._programRaw(
-            channelId: id,
-            start: _windowStart.subtract(const Duration(minutes: 30)),
-            end: _windowStart.add(const Duration(hours: 13)),
-          ),
-          'Overview': 'About $id',
-        },
-    ];
-
-    await pumpGuide(tester, miniPlayerMode: true);
-    _nodeLabelled(tester, 'GuideChannel:1').requestFocus();
-    await tester.pumpAndSettle();
-
-    expect(find.text('About cE'), findsOneWidget);
-    expect(find.text('About cD'), findsNothing);
-  });
-
-  testWidgets('in miniPlayerMode centre-press offers options, Watch tunes', (
+  testWidgets('in miniPlayerMode centre-press tunes and no dialog appears', (
     tester,
   ) async {
     channels = [_channelRaw('cD', 'Channel D')];
@@ -433,10 +410,6 @@ void main() {
     );
     await openDialogOnRow0(tester);
 
-    expect(_alertDialog, findsOneWidget);
-    expect(tunedChannelId, isNull);
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pumpAndSettle();
     expect(_alertDialog, findsNothing);
     expect(tunedChannelId, 'cD');
   });

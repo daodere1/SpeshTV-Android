@@ -74,7 +74,6 @@ void main() {
       ),
     );
     when(() => vm.supportsPersonFavorites).thenReturn(true);
-    when(() => vm.actionsSettled).thenReturn(true);
     when(() => vm.personAccounts).thenReturn(null);
 
     await tester.pumpWidget(

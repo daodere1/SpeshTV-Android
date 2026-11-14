@@ -30,9 +30,8 @@ abstract class AdminItemsApi {
   );
   /// Applies a result returned by [searchRemote] to [itemId]. When
   /// [replaceAllImages] is false the item keeps its existing artwork and only
-  /// textual metadata is replaced. Answers the item's new id when the server
-  /// gave it one, else null.
-  Future<String?> applyRemoteSearchResult(
+  /// textual metadata is replaced.
+  Future<void> applyRemoteSearchResult(
     String itemId,
     Map<String, dynamic> result, {
     bool replaceAllImages = true,

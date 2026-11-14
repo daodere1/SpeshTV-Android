@@ -58,12 +58,6 @@ class _DetailsScreenSettingsScreenState
                         l10n.detailScreenStyleNouveau,
                       DetailScreenStyle.minimalist =>
                         l10n.detailScreenStyleMinimalist,
-                      DetailScreenStyle.stage => l10n.detailScreenStyleStage,
-                      DetailScreenStyle.premiere =>
-                        l10n.detailScreenStylePremiere,
-                      DetailScreenStyle.quickLook =>
-                        l10n.detailScreenStyleQuickLook,
-                      DetailScreenStyle.frost => l10n.detailScreenStyleFrost,
                     },
                   ),
                   EnumPreferenceTile<PersonalRatingStyle>(
@@ -123,7 +117,6 @@ class _DetailsScreenSettingsScreenState
                       onChangeEnd: _pushPersonalizationSync,
                     ),
                   _TvSettingsListTile(
-                    previewKey: detailButtonLayout.orderPreference.key,
                     leading: const Icon(Icons.smart_button_outlined),
                     title: Text(l10n.detailButtons),
                     subtitle: Text(l10n.detailButtonsDescription),
@@ -157,7 +150,6 @@ class _DetailsScreenSettingsScreenState
               adaptiveListSection(
                 children: [
                   _TvSettingsListTile(
-                    previewKey: detailMetadataLayout.orderPreference.key,
                     leading: const Icon(Icons.view_headline_outlined),
                     title: Text(l10n.detailMetadata),
                     subtitle: Text(l10n.detailMetadataDescription),
@@ -225,7 +217,7 @@ class _DetailsScreenSettingsScreenState
                   EnumPreferenceTile<RecommendationSystemSource>(
                     preference: UserPreferences.recommendationSystemSource,
                     title: l10n.recommendationSystem,
-                    description: seerrBrand(l10n.recommendationSystemSubtitle),
+                    description: l10n.recommendationSystemSubtitle,
                     icon: Icons.auto_awesome,
                     labelOf: (v) => switch (v) {
                       RecommendationSystemSource.local =>
@@ -305,7 +297,6 @@ List<Widget> _ratingsSettingsTiles(
     onChanged: _pushPersonalizationSync,
   ),
   _TvSettingsListTile(
-    previewKey: settings.sources.key,
     leading: const Icon(Icons.reorder),
     title: Text(l10n.ratingSources),
     subtitle: Text(l10n.ratingSourcesDescription),

@@ -121,7 +121,6 @@ abstract class ItemsApi {
     String? enableImageTypes,
     int? imageTypeLimit,
     bool recursive = false,
-    bool? hideWatched,
   });
 
   Future<Map<String, dynamic>> getSeasons(String seriesId, {String? fields});
@@ -167,13 +166,10 @@ abstract class ItemsApi {
     bool? isFavorite,
   });
 
-  /// [fields] replaces the default field list, for a caller that only needs
-  /// the entry ids.
   Future<Map<String, dynamic>> getPlaylistItems(
     String playlistId, {
     int? startIndex,
     int? limit,
-    String? fields,
   });
 
   Future<Map<String, dynamic>> createPlaylist({

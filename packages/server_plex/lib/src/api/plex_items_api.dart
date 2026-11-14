@@ -126,6 +126,7 @@ class PlexItemsApi implements ItemsApi {
         [
           nameStartsWith,
           nameLessThan,
+          minPremiereDate,
           maxOfficialRating,
           hasParentalRating,
           anyProviderIdEquals,
@@ -213,11 +214,6 @@ class PlexItemsApi implements ItemsApi {
       path = '/library/metadata/$parent/${leaves ? 'allLeaves' : 'children'}';
     }
 
-    // Plex can't filter by premiere date, so the floor is applied to what it
-    // sends. A show's episodes come oldest first, so all of them are read
-    // before the page is cut, while a library is paged by Plex.
-    final pagedByPlex = minPremiereDate == null || path.endsWith('/all');
-
     // Later fields only break ties, so the sort stops at the first one Plex
     // can't do. With nothing left, Plex keeps its own order, which is disc
     // and track order for an album.
@@ -251,35 +247,16 @@ class PlexItemsApi implements ItemsApi {
       else if (isHd != null)
         'resolution': isHd ? '720,1080,4k' : 'sd,480,576',
       if (isFavorite == true) 'userRating': '$plexFavoriteRating',
-      if (pagedByPlex) ..._paging(startIndex, limit),
+      ..._paging(startIndex, limit),
     });
 
     // Children and leaves come back unfiltered, so the type check happens here.
-    final typed = _ofTypes(_items(container['Metadata']), includeItemTypes);
-    final items = minPremiereDate == null
-        ? typed
-        : [
-            for (final item in typed)
-              if (_premieredSince(item, minPremiereDate)) item,
-          ];
-    if (!pagedByPlex) {
-      final start = startIndex ?? 0;
-      return plexItemsResult(
-        items.skip(start).take(limit ?? items.length).toList(),
-        total: items.length,
-        startIndex: start,
-      );
-    }
+    final items = _ofTypes(_items(container['Metadata']), includeItemTypes);
     return plexItemsResult(
       items,
-      total: minPremiereDate == null ? container['totalSize'] as int? : null,
+      total: container['totalSize'] as int?,
       startIndex: startIndex ?? 0,
     );
-  }
-
-  static bool _premieredSince(Map<String, dynamic> item, DateTime floor) {
-    final premiered = DateTime.tryParse(item['PremiereDate'] as String? ?? '');
-    return premiered != null && !premiered.isBefore(floor);
   }
 
   /// The values a library's filter picker offers, read from Plex's own lists
@@ -533,11 +510,9 @@ class PlexItemsApi implements ItemsApi {
     String? enableImageTypes,
     int? imageTypeLimit,
     bool recursive = false,
-    bool? hideWatched,
   }) => getItems(
     parentId: parentId,
     includeItemTypes: includeItemTypes,
-    filters: hideWatched == true ? const ['IsUnplayed'] : null,
     sortBy: 'PremiereDate',
     sortOrder: 'Descending',
     limit: limit,
@@ -658,7 +633,6 @@ class PlexItemsApi implements ItemsApi {
     String playlistId, {
     int? startIndex,
     int? limit,
-    String? fields,
   }) async {
     final container = await plexContainer(
       _dio,

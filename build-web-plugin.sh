@@ -103,8 +103,7 @@ sync_target() {
 FLUTTER="$(resolve_flutter)"
 
 echo "Building Flutter web bundle for Moonfin plugin mode..."
-"$FLUTTER" build web --wasm --release --no-web-resources-cdn --base-href "/Moonfin/Web/"
-bash "$REPO_ROOT/scripts/fetch-web-fonts.sh" "$REPO_ROOT/build/web"
+"$FLUTTER" build web --wasm --release --base-href "/Moonfin/Web/"
 
 for target in "${TARGETS[@]}"; do
   sync_target "$target"

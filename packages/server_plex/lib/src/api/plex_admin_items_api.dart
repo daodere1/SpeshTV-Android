@@ -92,21 +92,18 @@ class PlexAdminItemsApi implements AdminItemsApi {
 
   /// Plex always brings the match's artwork along.
   @override
-  Future<String?> applyRemoteSearchResult(
+  Future<void> applyRemoteSearchResult(
     String itemId,
     Map<String, dynamic> result, {
     bool replaceAllImages = true,
-  }) async {
-    await _dio.put<dynamic>(
-      '/library/metadata/$itemId/match',
-      queryParameters: {
-        'guid': result['PlexGuid'],
-        'name': ?result['Name'],
-        'year': ?result['ProductionYear'],
-      },
-    );
-    return null;
-  }
+  }) => _dio.put<dynamic>(
+    '/library/metadata/$itemId/match',
+    queryParameters: {
+      'guid': result['PlexGuid'],
+      'name': ?result['Name'],
+      'year': ?result['ProductionYear'],
+    },
+  );
 
   /// Every choice Plex has for one kind of artwork, the one in use included.
   /// The choice's own key is what picking it sends back.

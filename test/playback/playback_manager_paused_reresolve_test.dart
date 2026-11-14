@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:playback_core/playback_core.dart';
 
 class _TestBackend extends Fake implements PlayerBackend {
+  final completions = StreamController<bool>.broadcast();
   final List<String> playedUrls = <String>[];
   final List<bool> autoPlayValues = <bool>[];
   final subtitleSessions = <int>[];
@@ -44,7 +47,7 @@ class _TestBackend extends Fake implements PlayerBackend {
   Stream<bool> get bufferingStream => const Stream<bool>.empty();
 
   @override
-  Stream<bool> get completedStream => const Stream<bool>.empty();
+  Stream<bool> get completedStream => completions.stream;
 
   @override
   Stream<Map<String, dynamic>>? get errorStream => null;
@@ -105,7 +108,7 @@ class _TestBackend extends Fake implements PlayerBackend {
   Future<void> setSubtitleRendererMode(SubtitleRendererMode mode) async {}
 
   @override
-  Future<void> setSecondarySubtitleDelay(double seconds) async {}
+  Future<void> disableSubtitleTrack() async {}
 
   @override
   Future<void> waitForTracksReady() async {}
@@ -194,7 +197,10 @@ void main() {
       ..setPlayerService(_TestService());
   });
 
-  tearDown(() => manager.dispose());
+  tearDown(() {
+    manager.dispose();
+    backend.completions.close();
+  });
 
   Future<void> startPlayback() async {
     await manager.playItems(<dynamic>[
@@ -202,6 +208,23 @@ void main() {
     ]);
     backend.currentPosition = const Duration(seconds: 90);
   }
+
+  test('natural completion callback excludes pause and manual stop', () async {
+    final completed = <dynamic>[];
+    manager.onItemCompleted = completed.add;
+    manager.autoAdvanceEnabled = false;
+    await startPlayback();
+    await manager.pause();
+    expect(completed, isEmpty);
+    backend.currentPosition = const Duration(minutes: 30);
+    manager.state.setPosition(const Duration(minutes: 30));
+    backend.completions.add(true);
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, hasLength(1));
+    await startPlayback();
+    await manager.stop();
+    expect(completed, hasLength(1));
+  });
 
   test('a paused session stays paused across a re-resolve', () async {
     await startPlayback();
@@ -227,29 +250,30 @@ void main() {
     expect(backend.isPlaying, isTrue);
   });
 
-  test('subtitle session survives track, quality and background reloads', () async {
+  test('repeated server audio commands do not restart the stream', () async {
     await startPlayback();
-    await manager.setSecondarySubtitleDelay(0.75);
-    final first = backend.subtitleSessions.last;
-    await manager.changeAudioTrack(3);
-    await manager.changeBitrate(8);
-    await manager.stopForBackground(manager.queueService.currentItem);
-    await manager.startQueuedPlayback(freshResolution: true);
-    expect(backend.subtitleSessions, everyElement(first));
-    expect(manager.secondarySubtitleDelaySeconds, 0.75);
-
-    // Explicitly starting the same item again is a new session too.
-    await manager.playFromQueue(0);
-    expect(backend.subtitleSessions.last, isNot(first));
-    expect(manager.secondarySubtitleDelaySeconds, 0);
-
-    await manager.playItems([
-      {'Id': 'episode-1', 'Type': 'Episode'},
-      {'Id': 'episode-2', 'Type': 'Episode'},
-    ]);
-    final next = backend.subtitleSessions.last;
-    expect(next, isNot(first));
-    await manager.nextInQueue();
-    expect(backend.subtitleSessions.last, isNot(next));
+    await manager.changeAudioTrack(1, userInitiated: false);
+    final calls = resolver.calls;
+    for (var i = 0; i < 5; i++) {
+      await manager.changeAudioTrack(1, userInitiated: false);
+    }
+    expect(resolver.calls, calls);
+    expect(backend.isPlaying, isTrue);
+    await manager.changeAudioTrack(2, userInitiated: false);
+    expect(resolver.calls, calls + 1);
   });
+
+  test(
+    'repeated subtitle-disable commands do not restart the stream',
+    () async {
+      await startPlayback();
+      await manager.disableSubtitles();
+      final calls = resolver.calls;
+      for (var i = 0; i < 5; i++) {
+        await manager.disableSubtitles();
+      }
+      expect(resolver.calls, calls);
+      expect(backend.isPlaying, isTrue);
+    },
+  );
 }

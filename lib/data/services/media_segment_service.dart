@@ -57,7 +57,7 @@ class MediaSegmentService {
   Map<MediaSegmentType, MediaSegmentAction> get actionMap =>
       parseMediaSegmentActions(_prefs.get(UserPreferences.mediaSegmentActions));
 
-  SegmentCheckResult checkPosition(Duration position) {
+  SegmentCheckResult checkPosition(Duration position, {bool suppressPrompts = false}) {
     if (_segments.isEmpty) return SegmentCheckResult.none;
 
     // Back at or before the start is a rewind into the segment on purpose,
@@ -67,6 +67,11 @@ class MediaSegmentService {
     for (final segment in _segments) {
       if (position >= segment.start && position < segment.end) {
         final action = actionMap[segment.type] ?? MediaSegmentAction.nothing;
+        // A resume/seek can temporarily hide prompts. Do not consume the
+        // first entry until the player can actually display the prompt.
+        if (suppressPrompts && action == MediaSegmentAction.askToSkip) {
+          return SegmentCheckResult.none;
+        }
         // Seeks travel as whole milliseconds; a truncated end would still be
         // inside the segment.
         final skipTo = Duration(
@@ -117,22 +122,6 @@ class MediaSegmentService {
     return SegmentCheckResult.none;
   }
 }
-
-/// AetherEngine plays video on Apple platforms and parks a seek into the last
-/// half second as paused without ever reporting the end, so a skip that would
-/// land there stops a second short instead.
-Duration skipLandingBeforeEnd(Duration target, Duration duration) {
-  final latest = duration - const Duration(seconds: 1);
-  return latest > Duration.zero && target > latest ? latest : target;
-}
-
-/// Whether credits ending at [skipTo] leave nothing to watch after them, so
-/// skipping them closes the player instead of seeking. The 5 seconds match
-/// the margin the playback manager treats as the item having finished.
-bool outroRunsToEnd(Duration? skipTo, Duration duration) =>
-    skipTo == null ||
-    duration <= Duration.zero ||
-    duration - skipTo <= const Duration(seconds: 5);
 
 class SegmentCheckResult {
   final MediaSegmentAction action;

@@ -1,4 +1,9 @@
+import 'dart:async';
+
 import 'package:playback_core/playback_core.dart';
+
+import '../data/services/discord_stage_announcer.dart';
+import '../util/platform_detection.dart';
 
 import '../data/repositories/offline_repository.dart';
 
@@ -14,26 +19,15 @@ class LocalAwarePlayerService implements PlayerService {
   final OfflineRepository _offlineRepo;
   final bool Function() _canReachServer;
 
-  /// Told which item stopped, how it played and where, once its stop has been
-  /// reported, so whatever reacts to a finished episode reads the server's
-  /// played state after it.
-  final void Function(
-    dynamic mediaItem,
-    StreamResolutionResult resolution,
-    Duration position,
-  )?
-  _onStopped;
+  /// Told which item stopped once its stop has been reported, so whatever
+  /// reacts to a finished episode reads the server's played state after it.
+  final void Function(dynamic mediaItem)? _onStopped;
 
   LocalAwarePlayerService(
     this._inner,
     this._offlineRepo, {
     required bool Function() canReachServer,
-    void Function(
-      dynamic mediaItem,
-      StreamResolutionResult resolution,
-      Duration position,
-    )?
-    onStopped,
+    void Function(dynamic mediaItem)? onStopped,
   }) : _canReachServer = canReachServer,
        _onStopped = onStopped;
 
@@ -59,6 +53,9 @@ class LocalAwarePlayerService implements PlayerService {
     int? audioStreamIndex,
     int? subtitleStreamIndex,
   }) async {
+    if (PlatformDetection.isWindows) {
+      unawaited(DiscordStageAnnouncer.instance.playbackStarted(mediaItem));
+    }
     if (!resolution.isLocalMedia) {
       return _inner.onPlaybackStart(
         mediaItem,
@@ -143,7 +140,7 @@ class LocalAwarePlayerService implements PlayerService {
         ),
       );
     } finally {
-      _onStopped?.call(mediaItem, resolution, position);
+      _onStopped?.call(mediaItem);
     }
   }
 

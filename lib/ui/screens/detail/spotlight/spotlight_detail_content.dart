@@ -419,11 +419,7 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
         () => context.push(Destinations.seerrCollection(collectionId)),
       ),
       openStudio: (name) =>
-          _closeModalThen(
-            () => context.push(
-              Destinations.studio(name, serverId: item.serverId),
-            ),
-          ),
+          _closeModalThen(() => context.push(Destinations.studio(name))),
       playFromChapter: (position) =>
           _closeModalThen(() => widget.onPlayFromChapter?.call(position)),
       playExtra: (extra) => _closeModalThen(() => _playItems([extra], 0)),
@@ -691,7 +687,6 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
     Map<String, dynamic>? selectedSource, {
     required bool showLogo,
     required bool showVersionBadge,
-    String? realName,
   }) {
     final textTheme = Theme.of(context).textTheme;
     final logoScaleFactor = _desktopScale > 1.1 ? 0.70 : 1.0;
@@ -702,10 +697,9 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
     final logoId = logoTag != null
         ? (item.logoImageTag != null ? item.id : item.seriesId)
         : null;
-    final itemName = realName ?? item.name;
 
     final titleText = Text(
-      itemName,
+      item.name,
       style: (_landscape ? textTheme.displaySmall : textTheme.headlineMedium)
           ?.copyWith(fontWeight: FontWeight.w700, color: _titleColor),
     );
@@ -1116,8 +1110,6 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
     AggregatedItem item,
     List<SpotlightCardSpec> cards,
   ) {
-    final series = item.type == 'BookSeries' ? item : null;
-    item = _vm.seriesFeaturedBook ?? item;
     final overview = cleanOverview(item.overview?.trim());
     final isPerson = item.type == 'Person';
     final visibility = DetailSectionVisibility.of(widget.prefs);
@@ -1148,8 +1140,6 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
     final tagline = isPerson || !visibility.shows(DetailSection.tagline)
         ? null
         : _buildTagline(context, item);
-    final itemName = series?.name ?? item.name;
-    final realItem = series ?? item;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1165,7 +1155,6 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
             selectedSource,
             showLogo: visibility.shows(DetailSection.logo),
             showVersionBadge: visibility.shows(DetailSection.versionBadge),
-            realName: itemName,
           ),
         const SizedBox(height: 8),
         if (!isPerson) ...[
@@ -1193,7 +1182,7 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
           _buildOverview(context, overview),
         ],
         const SizedBox(height: 16),
-        _buildActions(context, realItem, cards),
+        _buildActions(context, item, cards),
       ],
     );
   }

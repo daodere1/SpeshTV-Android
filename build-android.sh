@@ -5,6 +5,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Moonfin"
 APK_SOURCE="$REPO_ROOT/build/app/outputs/flutter-apk/app-mobile-release.apk"
 BUNDLE_SOURCE="$REPO_ROOT/build/app/outputs/bundle/mobileRelease/app-mobile-release.aab"
+TV_APK_SOURCE="$REPO_ROOT/build/app/outputs/flutter-apk/app-androidtv-release.apk"
+TV_BUNDLE_SOURCE="$REPO_ROOT/build/app/outputs/bundle/androidTvRelease/app-androidTv-release.aab"
 PAGE_SIZE_CHECKER="$REPO_ROOT/scripts/check-android-16kb-pages.sh"
 
 resolve_flutter() {
@@ -38,17 +40,6 @@ resolve_flutter() {
 
 FLUTTER="$(resolve_flutter)"
 
-# On CI, the Gradle and Kotlin daemons left over from the APK build still hold
-# their memory when the App Bundle build starts its own Dart AOT compiles, and
-# together they run the 16 GB runner out of memory. Locally the warm daemons
-# just make the second build faster, so they're only stopped on CI.
-stop_gradle_daemons_on_ci() {
-  [ -n "${CI:-}" ] || return 0
-  echo "Stopping Gradle and Kotlin daemons before the App Bundle build..."
-  (cd "$REPO_ROOT/android" && ./gradlew --stop) || true
-  pkill -f KotlinCompileDaemon || true
-}
-
 VERSION_LINE=$(grep '^version:' "$REPO_ROOT/pubspec.yaml" | sed 's/version:[[:space:]]*//' | tr -d '[:space:]')
 APP_VERSION=$(printf '%s' "$VERSION_LINE" | cut -d'+' -f1)
 APP_BUILD_NUMBER=$(printf '%s' "$VERSION_LINE" | cut -d'+' -f2)
@@ -60,7 +51,18 @@ fi
 APK_OUTPUT="$REPO_ROOT/${APP_NAME}_Android_v${APP_VERSION}.apk"
 BUNDLE_OUTPUT="$REPO_ROOT/${APP_NAME}_Android_v${APP_VERSION}.aab"
 
+TV_VERSION=$(grep '^\s*android_tv_version:' "$REPO_ROOT/pubspec.yaml" | sed 's/.*android_tv_version:[[:space:]]*//' | tr -d '[:space:]')
+TV_BUILD_NUMBER=$(grep '^\s*android_tv_build_number:' "$REPO_ROOT/pubspec.yaml" | sed 's/.*android_tv_build_number:[[:space:]]*//' | tr -d '[:space:]')
+if [ -z "$TV_VERSION" ] || [ -z "$TV_BUILD_NUMBER" ]; then
+  echo "Error: could not read android_tv_version / android_tv_build_number from pubspec.yaml" >&2
+  exit 1
+fi
+
+TV_APK_OUTPUT="$REPO_ROOT/${APP_NAME}_AndroidTV_v${TV_VERSION}.apk"
+TV_BUNDLE_OUTPUT="$REPO_ROOT/${APP_NAME}_AndroidTV_v${TV_VERSION}.aab"
+
 echo "${APP_NAME} version: ${APP_VERSION} (${APP_BUILD_NUMBER})"
+echo "${APP_NAME} Android TV version: ${TV_VERSION} (${TV_BUILD_NUMBER})"
 
 cd "$REPO_ROOT"
 
@@ -70,7 +72,7 @@ echo "Cleaning previous Flutter outputs..."
 echo "Resolving packages..."
 "$FLUTTER" pub get
 
-echo "Building Android release APK for phones, tablets and TVs (arm64-v8a, armeabi-v7a, x86_64)..."
+echo "Building Android release APK (arm64-v8a, armeabi-v7a, x86_64)..."
 "$FLUTTER" build apk --release \
   --flavor mobile \
   --build-name "$APP_VERSION" \
@@ -92,7 +94,6 @@ fi
 echo "APK created: $APK_SOURCE"
 echo "APK copied to root: $APK_OUTPUT"
 
-stop_gradle_daemons_on_ci
 echo "Building Android App Bundle..."
 if ! "$FLUTTER" build appbundle --release \
   --flavor mobile \
@@ -120,3 +121,55 @@ fi
 
 echo "App Bundle created: $BUNDLE_SOURCE"
 echo "App Bundle copied to root: $BUNDLE_OUTPUT"
+
+echo "Building Android TV release APK..."
+"$FLUTTER" build apk --release \
+  --flavor androidTv \
+  --build-name "$TV_VERSION" \
+  --build-number "$TV_BUILD_NUMBER" \
+  --dart-define=MOONFIN_FORCE_TV=true \
+  --dart-define=DISTRIBUTION_CHANNEL=android_tv_apk
+
+if [ ! -f "$TV_APK_SOURCE" ]; then
+  echo "Error: TV APK not found at $TV_APK_SOURCE" >&2
+  exit 1
+fi
+
+cp "$TV_APK_SOURCE" "$TV_APK_OUTPUT"
+
+if [ -x "$PAGE_SIZE_CHECKER" ]; then
+  echo "Running 16 KB page-size compatibility check on TV APK (informational only)..."
+  "$PAGE_SIZE_CHECKER" "$TV_APK_SOURCE" || echo "Warning: TV APK 16 KB page-size check failed (not blocking)" >&2
+fi
+
+echo "TV APK created: $TV_APK_SOURCE"
+echo "TV APK copied to root: $TV_APK_OUTPUT"
+
+echo "Building Android TV App Bundle..."
+if ! "$FLUTTER" build appbundle --release \
+  --flavor androidTv \
+  --build-name "$TV_VERSION" \
+  --build-number "$TV_BUILD_NUMBER" \
+  --dart-define=MOONFIN_FORCE_TV=true \
+  --dart-define=DISTRIBUTION_CHANNEL=android_tv_aab; then
+  echo "Flutter appbundle build failed. Retrying with Gradle bundleAndroidTvRelease fallback..."
+  (
+    cd "$REPO_ROOT/android"
+    ./gradlew bundleAndroidTvRelease
+  )
+fi
+
+if [ ! -f "$TV_BUNDLE_SOURCE" ]; then
+  echo "Error: TV App Bundle not found at $TV_BUNDLE_SOURCE" >&2
+  exit 1
+fi
+
+cp "$TV_BUNDLE_SOURCE" "$TV_BUNDLE_OUTPUT"
+
+if [ -x "$PAGE_SIZE_CHECKER" ]; then
+  echo "Running 16 KB page-size compatibility check on TV App Bundle..."
+  "$PAGE_SIZE_CHECKER" "$TV_BUNDLE_SOURCE"
+fi
+
+echo "TV App Bundle created: $TV_BUNDLE_SOURCE"
+echo "TV App Bundle copied to root: $TV_BUNDLE_OUTPUT"

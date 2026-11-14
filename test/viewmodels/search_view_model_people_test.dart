@@ -15,6 +15,13 @@ class _MockClient extends Mock implements MediaServerClient {}
 
 class _MockItemsApi extends Mock implements ItemsApi {}
 
+class _FakeUserViewsApi extends Fake implements UserViewsApi {
+  @override
+  Future<Map<String, dynamic>> getUserViews({bool includeHidden = false}) async => {
+    'Items': [{'Id': 'movies', 'Name': 'Movies', 'CollectionType': 'movies'}],
+  };
+}
+
 void main() {
   late _MockClient client;
   late _MockItemsApi itemsApi;
@@ -27,8 +34,8 @@ void main() {
     client = _MockClient();
     itemsApi = _MockItemsApi();
     when(() => client.itemsApi).thenReturn(itemsApi);
+    when(() => client.userViewsApi).thenReturn(_FakeUserViewsApi());
     when(() => client.gamesApi).thenReturn(null);
-    when(() => client.serverType).thenReturn(ServerType.jellyfin);
   });
 
   tearDown(() => GetIt.instance.reset());
@@ -39,11 +46,12 @@ void main() {
         searchTerm: term,
         parentId: any(named: 'parentId'),
         includeItemTypes: any(named: 'includeItemTypes'),
-        excludeItemTypes: any(named: 'excludeItemTypes'),
         limit: any(named: 'limit'),
         recursive: any(named: 'recursive'),
         fields: any(named: 'fields'),
         studios: any(named: 'studios'),
+        enableTotalRecordCount: any(named: 'enableTotalRecordCount'),
+        collapseBoxSetItems: any(named: 'collapseBoxSetItems'),
       ),
     ).thenAnswer(
       (_) async => {
@@ -111,7 +119,7 @@ void main() {
       expect(vm.state, SearchState.ready);
       expect(groupTypes(vm), ['Movie', 'Person']);
       async.elapse(const Duration(seconds: 15));
-      expect(updates, 2);
+      expect(updates, greaterThanOrEqualTo(2));
       vm.dispose();
     });
   });
@@ -201,7 +209,7 @@ void main() {
       async.flushMicrotasks();
 
       expect(vm.state, SearchState.ready);
-      expect(groupTypes(vm), ['Book', 'AudioBook']);
+      expect(groupTypes(vm), ['Book']);
       verifyNever(
         () => itemsApi.getPersons(
           searchTerm: any(named: 'searchTerm'),

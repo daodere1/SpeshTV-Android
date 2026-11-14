@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:playback_core/playback_core.dart';
@@ -16,6 +15,7 @@ import '../../data/services/audiobook_notes_service.dart';
 import '../../data/services/audiobook_resume_service.dart';
 import '../../data/services/auto_download_service.dart';
 import '../../data/services/connectivity_service.dart';
+import '../../data/services/discord_stage_announcer.dart';
 import '../../data/services/download_service.dart';
 import '../../data/services/log_service.dart';
 import '../../data/services/blocked_content_gate.dart';
@@ -42,16 +42,11 @@ import '../../playback/media_kit_player_backend.dart';
 import '../../playback/media3_player_backend.dart';
 import '../../playback/offline_stream_resolver.dart';
 import '../../playback/playback_profile_diagnostics.dart';
-import '../../playback/silo_playback_environment.dart';
-import '../../playback/server_shuffle_queue.dart';
-import '../../playback/silo_plugin_for.dart';
 import '../../playback/sleep_timer_controller.dart';
 import '../../platform/pip_service.dart';
 import '../../preference/preference_constants.dart';
 import '../../preference/user_preferences.dart';
 import '../../syncplay/syncplay_manager.dart';
-import '../../watch_party/silo_watch_party_manager.dart';
-import '../../watch_party/watch_party_rooms_service.dart';
 import '../../util/platform_detection.dart';
 import '../../util/episode_playability.dart';
 import '../../util/season_queue_context.dart';
@@ -245,9 +240,6 @@ Future<List<dynamic>> _nextSeasonItemsProvider(
   int _,
 ) async {
   if (completedItem is! AggregatedItem) return const <dynamic>[];
-  // A server's shuffle grows by the item it picks next.
-  final shuffled = await ServerShuffleQueue.instance.extend(completedItem);
-  if (shuffled != null) return shuffled;
   if (!_isEpisodeQueueItem(completedItem)) return const <dynamic>[];
 
   final seriesId = completedItem.seriesId;
@@ -330,37 +322,6 @@ Future<List<dynamic>> _nextSeasonItemsProvider(
   }
 }
 
-/// Writes a series' track choice through to a server that keeps one
-/// ([SeriesTrackPreferencesApi], Silo). Best effort: the device's
-/// own choice is already saved.
-void _rememberSeriesTrackOnServer(
-  dynamic item,
-  String seriesId,
-  int streamIndex, {
-  required bool subtitle,
-}) {
-  if (item is! AggregatedItem) return;
-  final Object? items;
-  try {
-    items = _resolveClientForServerId(item.serverId)?.itemsApi;
-  } catch (_) {
-    return;
-  }
-  if (items is! SeriesTrackPreferencesApi) return;
-  final write = subtitle
-      ? items.setSeriesSubtitleChoice(
-          seriesId,
-          itemId: item.id,
-          streamIndex: streamIndex,
-        )
-      : items.setSeriesAudioChoice(
-          seriesId,
-          itemId: item.id,
-          streamIndex: streamIndex,
-        );
-  write.catchError((Object _) {});
-}
-
 void registerPlaybackModule() {
   final pipService = PipService();
   _getIt.registerSingleton<PipService>(pipService);
@@ -421,6 +382,11 @@ void registerPlaybackModule() {
   _getIt.registerSingleton<PlayerBackend>(initialBackend);
 
   final manager = PlaybackManager();
+  if (PlatformDetection.isWindows) {
+    manager.onItemCompleted = (item) {
+      unawaited(DiscordStageAnnouncer.instance.playbackCompleted(item));
+    };
+  }
   // A launch that hangs goes quiet in the network log, since the stall sits
   // between requests. The bringup phases bracket every stage of a start, so
   // the last phase in a report names the stage that never finished.
@@ -444,10 +410,9 @@ void registerPlaybackModule() {
           : LogLevel.debug,
     );
   });
-  final autoBitrate = AutoBitrateService(_getIt<MediaServerClientFactory>());
-  manager
-    ..autoBitrateProvider = autoBitrate.measuredBpsForActiveServer
-    ..savedAutoBitrateProvider = autoBitrate.savedBpsForActiveServer;
+  manager.autoBitrateProvider = AutoBitrateService(
+    _getIt<MediaServerClientFactory>(),
+  ).measuredBpsForActiveServer;
 
   // The streams of one kind belonging to whatever is playing, or null when
   // that isn't an episode and so has no series to remember a choice for.
@@ -518,12 +483,6 @@ void registerPlaybackModule() {
     // leaves nothing to recognise it by later, so the last choice stays.
     if (pref.isEmpty) return;
     _getIt<UserPreferences>().setSeriesSubtitlePreference(series.seriesId, pref);
-    _rememberSeriesTrackOnServer(
-      manager.queueService.currentItem,
-      series.seriesId,
-      index,
-      subtitle: true,
-    );
   };
   manager.onAudioTrackSelected = (itemId, index) {
     final series = seriesStreams('audio');
@@ -534,12 +493,6 @@ void registerPlaybackModule() {
     );
     if (pref.isEmpty) return;
     _getIt<UserPreferences>().setSeriesAudioPreference(series.seriesId, pref);
-    _rememberSeriesTrackOnServer(
-      manager.queueService.currentItem,
-      series.seriesId,
-      index,
-      subtitle: false,
-    );
   };
 
   manager.setBackend(initialBackend);
@@ -801,16 +754,6 @@ void registerPlaybackModule() {
   _getIt.registerLazySingleton<SyncPlayManager>(
     () => SyncPlayManager(_getIt<PlaybackManager>(), _getIt<UserPreferences>()),
   );
-  _getIt.registerLazySingleton<SiloWatchPartyManager>(
-    () => SiloWatchPartyManager(_getIt<PlaybackManager>()),
-  );
-  _getIt.registerLazySingleton<WatchPartyRoomsService>(
-    () => WatchPartyRoomsService(
-      _getIt<SiloWatchPartyManager>(),
-      _getIt<UserPreferences>(),
-      _getIt<SyncPlayManager>(),
-    ),
-  );
 
   _getIt.registerLazySingleton<AudiobookBookmarksService>(
     () => AudiobookBookmarksService(),
@@ -879,10 +822,6 @@ void setActiveStreamResolver(MediaServerClient client) {
       PlexMediaStreamResolver(client),
       PlexPlaySessionService(client),
     ),
-    ServerType.silo => () {
-      final p = siloPluginFor(client, environment: siloPlaybackEnvironment);
-      return (p.createStreamResolver(), p.createPlaySessionService());
-    }(),
   };
 
   // Local-first: completed downloads play from disk instead of streaming,
@@ -920,22 +859,14 @@ void setActiveStreamResolver(MediaServerClient client) {
 /// Smart downloads and the remove-watched rule react as soon as an item
 /// stops, rather than waiting for the server's debounced user data event or
 /// the next reconnect.
-void _onItemStopped(
-  dynamic item,
-  StreamResolutionResult resolution,
-  Duration position,
-) {
+void _onItemStopped(dynamic item) {
   if (item is! AggregatedItem) return;
   if (item.type == 'Episode' && _getIt.isRegistered<AutoDownloadService>()) {
     _getIt<AutoDownloadService>().onEpisodeStopped(item.serverId);
   }
   if (removeWatchedTypes.contains(item.type) &&
       _getIt.isRegistered<RemoveWatchedService>()) {
-    final removeWatched = _getIt<RemoveWatchedService>();
-    if (resolution.isLocalMedia) {
-      removeWatched.onDownloadStopped(item, position);
-    }
-    removeWatched.onItemStopped(item.id);
+    _getIt<RemoveWatchedService>().onItemStopped(item.id);
   }
   // Plex sends no user data events, so the new resume point and watched state
   // have to be asked for. Plex items don't name their server, so one without

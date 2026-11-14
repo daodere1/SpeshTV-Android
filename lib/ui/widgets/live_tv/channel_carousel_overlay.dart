@@ -7,10 +7,8 @@ import 'package:moonfin_design/moonfin_design.dart';
 import 'package:server_core/server_core.dart';
 
 import '../../../data/models/live_tv_recording_state.dart';
-import '../../../data/services/user_data_sync.dart';
 import '../../../data/viewmodels/live_tv_guide_view_model.dart';
 import '../../../l10n/app_localizations.dart';
-import '../../../preference/preference_constants.dart';
 import '../../../util/focus/dpad_keys.dart';
 import '../../screens/livetv/epg/epg_genre.dart';
 import '../../screens/livetv/guide/guide_window.dart';
@@ -81,7 +79,6 @@ class ChannelCarouselPrewarm {
        viewModel =
            viewModelFactory?.call(client) ?? LiveTvGuideViewModel(client) {
     liveTvRecordingRevision.addListener(_onRecordingsChanged);
-    userDataSync.addListener(viewModel.syncChannelUserData);
   }
 
   /// The cached programs carry each showing's recording state, so a change
@@ -253,7 +250,6 @@ class ChannelCarouselPrewarm {
   void dispose() {
     _disposed = true;
     liveTvRecordingRevision.removeListener(_onRecordingsChanged);
-    userDataSync.removeListener(viewModel.syncChannelUserData);
     _timer?.cancel();
     _hourlyTimer?.cancel();
     _hourlyTimer = null;
@@ -395,7 +391,6 @@ class _ChannelCarouselOverlayState extends State<ChannelCarouselOverlay>
     // no localised formatting runs before the first build has a context.
     if (warm?.isWarm == true) _adoptWarmChannels();
     _vm.addListener(_onDataChanged);
-    userDataSync.addListener(_onChannelUserDataChanged);
     if (warm?.isWarm == true) unawaited(warm!.ensureReady());
     if (_ownsViewModel) WidgetsBinding.instance.addObserver(this);
     _resetInactivity();
@@ -463,7 +458,6 @@ class _ChannelCarouselOverlayState extends State<ChannelCarouselOverlay>
     _loadTimer?.cancel();
     _hideTimer?.cancel();
     _quarterTimer?.cancel();
-    userDataSync.removeListener(_onChannelUserDataChanged);
     _vm.removeListener(_onDataChanged);
     if (_ownsViewModel) _vm.cancelBoundaryRefresh();
     if (_ownsViewModel) _vm.dispose();
@@ -520,20 +514,6 @@ class _ChannelCarouselOverlayState extends State<ChannelCarouselOverlay>
 
   List<String> _neighborhood() =>
       carouselNeighborhood(_channels, _centeredId, _visibleCards);
-
-  void _onChannelUserDataChanged() {
-    if (!mounted) return;
-    if (_ownsViewModel) _vm.syncChannelUserData();
-    final updated = GuideChannel.withSyncedUserDataAll(_channels);
-    if (updated == null) return;
-    if (_vm.sortBy == ChannelSortBy.favoritesFirst) {
-      updated.sort(LiveTvGuideViewModel.comparatorFor(_vm.sortBy));
-    }
-    setState(() {
-      _channels = updated;
-      _invalidateEntries();
-    });
-  }
 
   void _onDataChanged() {
     if (!mounted) return;
@@ -765,6 +745,7 @@ class _ChannelCarouselOverlayState extends State<ChannelCarouselOverlay>
       GuideFilter.kids => l10n.kids,
       GuideFilter.premiere => l10n.premiere,
       GuideFilter.favorites => l10n.favorites,
+      GuideFilter.recentlyWatched => 'Recently watched',
     };
   }
 
@@ -893,6 +874,7 @@ class _ChannelCarouselOverlayState extends State<ChannelCarouselOverlay>
               text: overview,
               maxLines: _overviewLines,
               style: _overviewStyle,
+              millisPerPixel: kChannelCarouselDescriptionMarqueeMillisPerPixel,
               pauseDurationMs: 1600,
               showDotSeparator: false,
             ),

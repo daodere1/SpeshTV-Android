@@ -23,8 +23,6 @@ plugins {
     id("com.google.gms.google-services") version("4.5.0") apply false
     // END: FlutterFire Configuration
     id("org.jetbrains.kotlin.android") version "2.4.0" apply false
-    // Keeps moonfin_native_video's Compose compiler plugin on the same version
-    // as the Kotlin plugin above.
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.0" apply false
 }
 

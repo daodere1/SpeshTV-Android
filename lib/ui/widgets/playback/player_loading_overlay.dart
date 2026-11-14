@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../spesh_brand.dart';
 import 'package:get_it/get_it.dart';
 
 import '../../../preference/preference_constants.dart';
@@ -9,6 +10,7 @@ class PlayerLoadingOverlay extends StatefulWidget {
   const PlayerLoadingOverlay({
     super.key,
     this.label,
+    this.labelSpacing,
     this.customImage,
     this.customSize,
     this.customPosition,
@@ -18,8 +20,9 @@ class PlayerLoadingOverlay extends StatefulWidget {
   });
 
   final String? label;
+  final double? labelSpacing;
   final LoadingAnimationImage? customImage;
-  final LoadingAnimationSize? customSize;
+  final double? customSize;
   final LoadingAnimationPosition? customPosition;
   final bool? customShowText;
   final LoadingAnimationSpeed? customSpeed;
@@ -73,9 +76,10 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
         prefs?.get(UserPreferences.loadingAnimationImage) ??
         LoadingAnimationImage.moonfinLogo;
 
-    final sizePref = widget.customSize ??
-        prefs?.get(UserPreferences.loadingAnimationSize) ??
+    final sizePref = prefs?.get(UserPreferences.loadingAnimationSize) ??
         LoadingAnimationSize.medium;
+
+    final effectiveSize = widget.customSize ?? sizePref.pixelSize;
 
     final effectivePosition = widget.customPosition ??
         prefs?.get(UserPreferences.loadingAnimationPosition) ??
@@ -93,11 +97,21 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
     final hasLabel = showText && label != null && label.isNotEmpty;
     final uppercaseLabel = hasLabel ? label.toUpperCase() : null;
 
+    if (speshWeb) {
+      return Column(mainAxisSize: MainAxisSize.min, children: [
+        const SpeshBrand(height: 48),
+        const SizedBox(height: 24),
+        const CircularProgressIndicator(color: Color(0xFF56D9CC)),
+        if (hasLabel) Padding(padding: const EdgeInsets.only(top: 24),
+          child: Text(label, textAlign: TextAlign.center)),
+      ]);
+    }
+
     if (image == LoadingAnimationImage.none && !hasLabel) {
       return const SizedBox.shrink();
     }
 
-    final spacing = sizePref.labelSpacing;
+    final spacing = widget.labelSpacing ?? sizePref.labelSpacing;
     final fontSize = sizePref.labelFontSize;
     final letterSpacing = sizePref.labelLetterSpacing;
 
@@ -110,7 +124,7 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
           RepaintBoundary(
             child: LoadingAnimationWidget(
               image: image,
-              size: sizePref.pixelSize,
+              size: effectiveSize,
               position: effectivePosition,
               flipHorizontal: widget.flipHorizontal,
               speed: effectiveSpeed,

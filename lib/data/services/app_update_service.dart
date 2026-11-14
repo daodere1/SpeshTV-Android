@@ -47,7 +47,7 @@ class AppUpdateService {
   AppUpdateService(this._store, this._userPreferences);
 
   static const _latestReleaseHost = 'api.github.com';
-  static const _latestReleasePath = '/repos/Moonfin-Client/Moonfin-Core/releases/latest';
+  static const _latestReleasePath = '/repos/daodere1/SpeshTV-Android/releases/latest';
   static const _checkCooldown = Duration(hours: 24);
 
   static const _lastCheckMsKey = 'app_update_last_check_ms';
@@ -64,9 +64,6 @@ class AppUpdateService {
     'com.huawei.appmarket',
     'com.xiaomi.mipicks',
     'org.fdroid.fdroid',
-    'org.fdroid.basic',
-    'com.looker.droidify',
-    'com.machiav3lli.fdroid',
   };
 
   static bool isStoreInstaller(String? installer) {
@@ -105,7 +102,9 @@ class AppUpdateService {
     required bool respectNotificationPreference,
     required bool suppressIfAlreadyNotified,
   }) async {
-    if (!AppDistribution.supportsInAppUpdates) {
+    // Fork releases must not offer an upstream installer.
+    if ((Platform.isWindows && const bool.fromEnvironment('SPESHMEDIA_CLIENT', defaultValue: true)) ||
+        !AppDistribution.supportsInAppUpdates) {
       return const DesktopUpdateCheckResult(
         status: DesktopUpdateCheckStatus.unsupportedPlatform,
       );
@@ -176,10 +175,14 @@ class AppUpdateService {
     );
   }
 
-  /// Whether a store installed this copy. Only the Android APK channel can end
+  /// Whether a store installed this copy. Only the Android APK channels can end
   /// up store-installed while still carrying the in-app updater.
   Future<bool> _isStoreInstalled() async {
-    if (AppDistribution.channel != DistributionChannel.apk) return false;
+    final channel = AppDistribution.channel;
+    if (channel != DistributionChannel.apk &&
+        channel != DistributionChannel.androidTvApk) {
+      return false;
+    }
 
     try {
       final packageInfo = await PackageInfo.fromPlatform();
@@ -202,7 +205,7 @@ class AppUpdateService {
 
   Future<_LatestRelease?> _fetchLatestRelease() async {
     final client = HttpClient()
-      ..userAgent = 'MoonfinUpdateChecker/1.0'
+      ..userAgent = 'SpeshTVUpdateChecker/1.0'
       ..connectionTimeout = const Duration(seconds: 10);
 
     try {
@@ -227,7 +230,7 @@ class AppUpdateService {
       }
 
       final htmlUrl = decoded['html_url']?.toString() ??
-          'https://github.com/Moonfin-Client/Moonfin-Core/releases/latest';
+          'https://github.com/daodere1/SpeshTV-Android/releases/latest';
 
       final assetsJson = decoded['assets'];
       final assets = <_ReleaseAsset>[];
@@ -260,7 +263,11 @@ class AppUpdateService {
 
     switch (AppDistribution.channel) {
       case DistributionChannel.apk:
-        return _firstByExtension(assets, const ['.apk']);
+        return _firstWhere(assets, '.apk', requireSubstring: 'mobile') ??
+            _firstByExtension(assets, const ['.apk']);
+      case DistributionChannel.androidTvApk:
+        return _firstWhere(assets, '.apk', requireSubstring: '-tv-') ??
+            _firstByExtension(assets, const ['.apk']);
       case DistributionChannel.macosDmg:
         return _firstByExtension(assets, const ['.dmg']);
       case DistributionChannel.windows:

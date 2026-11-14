@@ -409,6 +409,7 @@ LRESULT
 FlutterWindow::RouteMessage(HWND hwnd, UINT const message,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
+  HandlePlacementMessage(hwnd, message, wparam);
   // Ahead of the plugin dispatch, deliberately: the registered-delegate chain
   // stops at the first plugin that claims a message, and window_manager
   // registers before these windows exist, so a delegate never sees

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'spesh_brand.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -38,7 +39,7 @@ import 'navigation_layout.dart';
 import 'settings/settings_panel.dart';
 import '../screens/downloads/downloads_panel.dart';
 import '../screens/settings/settings_side_panel.dart';
-import '../screens/watch_party/watch_together_route.dart';
+import '../screens/syncplay/syncplay_screen.dart';
 import 'seerr_icons.dart';
 import 'server_messages_dialog.dart';
 import 'server_messages_nav_slot.dart';
@@ -46,6 +47,7 @@ import 'shuffle_overlay.dart';
 import 'user_menu_dialog.dart';
 
 import 'offline_aware_image.dart';
+import 'paced_network_image.dart';
 import 'package:playback_core/playback_core.dart';
 import '../../data/models/aggregated_item.dart';
 import '../../data/services/media_server_client_factory.dart';
@@ -53,7 +55,6 @@ import '../../util/focus/dpad_keys.dart';
 import '../../util/focus/input_mode_tracker.dart';
 import '../navigation/app_router.dart';
 import 'adaptive/sf_symbol.dart';
-import 'user_avatar_image.dart';
 
 const _kToolbarHeightTV = 95.0;
 const _kToolbarHeightDesktop = 80.0;
@@ -931,11 +932,25 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
                   : null,
             ),
             child: ClipOval(
-              child: UserAvatarImage(
-                url: _userImageUrl,
-                size: avatarSize,
-                fallback: _avatarFallback(),
-              ),
+              child: _userImageUrl != null
+                  ? Image(
+                      image: ResizeImage.resizeIfNeeded(
+                        ArtworkDecode.widthFor(
+                          avatarSize,
+                          MediaQuery.devicePixelRatioOf(context),
+                        ),
+                        null,
+                        PacedNetworkImage(
+                          _userImageUrl!,
+                          headers: serverImageHeaders,
+                        ),
+                      ),
+                      fit: BoxFit.cover,
+                      width: avatarSize,
+                      height: avatarSize,
+                      errorBuilder: (_, _, _) => _avatarFallback(),
+                    )
+                  : _avatarFallback(),
             ),
           ),
         ),
@@ -994,10 +1009,6 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
         !kidsMode &&
         _prefs.get(UserPreferences.showSeerrButton) &&
         GetIt.instance<PluginSyncService>().seerrAvailable;
-    final showCalendar =
-        !kidsMode &&
-        _prefs.get(UserPreferences.showCalendarButton) &&
-        GetIt.instance<PluginSyncService>().calendarAvailable;
     final l10n = AppLocalizations.of(context);
     final seerrNavLabel = seerrPrefs.labelOrDefault(l10n.seerr);
     // Desktop/macOS keeps the dropdown; inline fan-out is only used where
@@ -1031,9 +1042,9 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
                 order: (order++).toDouble(),
                 child: ExpandableIconButton(
                   key: const ValueKey('toolbar_home'),
-                  forceExpanded: alwaysExpanded,
-                  icon: Icons.home_rounded,
-                  label: l10n.home,
+                  forceExpanded: speshWeb || alwaysExpanded,
+                  icon: speshWeb ? Icons.live_tv_outlined : Icons.home_rounded,
+                  label: speshWeb ? 'SpeshTV' : l10n.home,
                   baseColor: nextNavColor(),
                   focusNode: _homeFocus,
                   onPressed: () {
@@ -1140,11 +1151,11 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
                     key: const ValueKey('toolbar_syncplay'),
                     forceExpanded: alwaysExpanded,
                     icon: Icons.groups_rounded,
-                    label: l10n.watchParties,
+                    label: l10n.syncPlay,
                     baseColor: nextNavColor(),
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => watchTogetherScreen(),
+                        builder: (_) => const SyncPlayScreen(),
                       ),
                     ),
                   ),
@@ -1165,23 +1176,6 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
                     onPressed: () {
                       if (_isActive(Destinations.seerrDiscover)) return;
                       context.navigateTopLevel(Destinations.seerrDiscover);
-                    },
-                  ),
-                ),
-              ],
-              if (showCalendar) ...[
-                _gap(),
-                _orderButton(
-                  order: (order++).toDouble(),
-                  child: ExpandableIconButton(
-                    key: const ValueKey('toolbar_calendar'),
-                    forceExpanded: alwaysExpanded,
-                    baseColor: nextNavColor(),
-                    icon: Icons.calendar_month_rounded,
-                    label: l10n.calendar,
-                    onPressed: () {
-                      if (_isActive(Destinations.calendar)) return;
-                      context.navigateTopLevel(Destinations.calendar);
                     },
                   ),
                 ),

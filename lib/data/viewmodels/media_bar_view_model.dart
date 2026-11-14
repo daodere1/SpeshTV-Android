@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/widgets.dart';
 import 'package:get_it/get_it.dart';
 import 'package:server_core/server_core.dart';
@@ -28,7 +30,10 @@ class MediaBarViewModel extends ChangeNotifier {
   final _galleryDetailInFlight = <String>{};
   final _ratingsInFlight = <String>{};
   bool _isLoading = false;
+  bool _disposed = false;
   bool _reloadAfterLoad = false;
+  PluginSyncService? _sync;
+  bool _lastPluginAvailable = false;
   int _loadGeneration = 0;
 
   String get baseUrl => _client.baseUrl;
@@ -37,8 +42,14 @@ class MediaBarViewModel extends ChangeNotifier {
   late String _lastContentType;
   late String _lastItemCount;
   late String _lastSources;
-  PluginSyncService? _sync;
-  bool _lastPluginAvailable = false;
+  String get _sources => jsonEncode([
+    _prefs.get(UserPreferences.mediaBarLibraryIds),
+    _prefs.get(UserPreferences.mediaBarCollectionIds),
+    _prefs.get(UserPreferences.mediaBarExcludedGenres),
+    _prefs.get(UserPreferences.mediaBarSourceType),
+    _prefs.get(UserPreferences.pluginSyncEnabled),
+    _prefs.get(UserPreferences.mediaBarExternalLists),
+  ]);
 
   List<MediaBarSlideItem> get items =>
       _state is MediaBarReady ? (_state as MediaBarReady).items : const [];
@@ -58,7 +69,7 @@ class MediaBarViewModel extends ChangeNotifier {
       final item = items.where((i) => i.itemId == itemId).firstOrNull;
       if (item == null) return;
       await _loadItemRatings(item);
-      if (_ratings.containsKey(itemId)) {
+      if (!_disposed && _ratings.containsKey(itemId)) {
         notifyListeners();
       }
     } finally {
@@ -127,7 +138,7 @@ class MediaBarViewModel extends ChangeNotifier {
     );
     _lastContentType = _prefs.get(UserPreferences.mediaBarContentType);
     _lastItemCount = _prefs.get(UserPreferences.mediaBarItemCount);
-    _lastSources = _sources();
+    _lastSources = _sources;
     _prefs.addListener(_onPrefsChanged);
     if (GetIt.instance.isRegistered<PluginSyncService>()) {
       _sync = GetIt.instance<PluginSyncService>();
@@ -148,43 +159,29 @@ class MediaBarViewModel extends ChangeNotifier {
     }
   }
 
-  /// Everything that picks which titles the bar draws from, and the new
-  /// release banner those titles carry.
-  String _sources() => [
-    ...[
-      UserPreferences.mediaBarSourceType,
-      UserPreferences.mediaBarLibraryIds,
-      UserPreferences.mediaBarCollectionIds,
-      UserPreferences.mediaBarExcludedGenres,
-      UserPreferences.mediaBarExternalLists,
-    ].map(_prefs.get),
-    _prefs.get(UserPreferences.mediaBarNewReleaseBanner),
-    _prefs.get(UserPreferences.mediaBarNewReleaseDays),
-    _prefs.get(UserPreferences.hideWatchedInRecentRows),
-  ].join('|');
-
   void _onPrefsChanged() {
     final mode = UserPreferences.normalizeMediaBarMode(
       _prefs.get(UserPreferences.mediaBarMode),
     );
     final contentType = _prefs.get(UserPreferences.mediaBarContentType);
     final itemCount = _prefs.get(UserPreferences.mediaBarItemCount);
-    final sources = _sources();
 
     if (mode != _lastMode ||
         contentType != _lastContentType ||
         itemCount != _lastItemCount ||
-        sources != _lastSources) {
+        _sources != _lastSources) {
       _lastMode = mode;
       _lastContentType = contentType;
       _lastItemCount = itemCount;
-      _lastSources = sources;
-      load(force: true);
+      _lastSources = _sources;
+      load(force: true, preserveCurrent: false);
     }
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _loadGeneration++;
     _prefs.removeListener(_onPrefsChanged);
     _sync?.removeListener(_onPluginChanged);
     super.dispose();
@@ -196,15 +193,14 @@ class MediaBarViewModel extends ChangeNotifier {
     bool force = false,
   }) async {
     if (_state is! MediaBarLoading && !force) return;
+    if (_disposed) return;
     if (_isLoading) {
-      // A forced load asks for different titles than the one running, so it
-      // runs once that one is done rather than being dropped.
       _reloadAfterLoad = _reloadAfterLoad || force;
       return;
     }
     _isLoading = true;
     final loadGeneration = ++_loadGeneration;
-    final previousReady = _state is MediaBarReady
+    var previousReady = preserveCurrent && _state is MediaBarReady
         ? _state as MediaBarReady
         : null;
     _ratings.clear();
@@ -219,13 +215,25 @@ class MediaBarViewModel extends ChangeNotifier {
     }
 
     try {
-      final nextState = await _repository.loadItems();
-      if (loadGeneration != _loadGeneration || _reloadAfterLoad) return;
+      final nextState = await _repository.loadItems(
+        onCached: (cached) {
+          if (_disposed ||
+              loadGeneration != _loadGeneration ||
+              previousReady != null) {
+            return;
+          }
+          previousReady = cached;
+          _state = cached;
+          notifyListeners();
+          if (context != null && context.mounted) {
+            _repository.precacheImages(context, cached.items);
+          }
+        },
+      );
+      if (loadGeneration != _loadGeneration) return;
 
-      if (nextState is MediaBarError &&
-          previousReady != null &&
-          preserveCurrent) {
-        _state = previousReady;
+      if (nextState is MediaBarError && previousReady != null) {
+        _state = previousReady!;
       } else {
         _state = nextState;
       }
@@ -234,33 +242,16 @@ class MediaBarViewModel extends ChangeNotifier {
 
       if (_state is MediaBarReady) {
         _loadRatings((_state as MediaBarReady).items);
-        _loadNewReleases((_state as MediaBarReady).items);
       }
     } finally {
-      _isLoading = false;
-      if (_reloadAfterLoad) {
-        _reloadAfterLoad = false;
-        load(force: true);
+      if (loadGeneration == _loadGeneration) {
+        _isLoading = false;
+        if (_reloadAfterLoad && !_disposed) {
+          _reloadAfterLoad = false;
+          load(force: true);
+        }
       }
     }
-  }
-
-  Future<void> _loadNewReleases(List<MediaBarSlideItem> items) async {
-    final releases = await _repository.loadNewReleases(items);
-    final state = _state;
-    if (releases.isEmpty ||
-        state is! MediaBarReady ||
-        !identical(state.items, items)) {
-      return;
-    }
-    _state = MediaBarReady([
-      for (final item in items)
-        if (releases[item.itemId] case final release?)
-          item.withNewRelease(release)
-        else
-          item,
-    ]);
-    notifyListeners();
   }
 
   Future<void> _loadRatings(List<MediaBarSlideItem> items) async {
@@ -270,7 +261,7 @@ class MediaBarViewModel extends ChangeNotifier {
       items.map((item) async {
         if (item.tmdbId == null) return;
         await _loadItemRatings(item);
-        if (_ratings.containsKey(item.itemId)) {
+        if (!_disposed && _ratings.containsKey(item.itemId)) {
           notifyListeners();
         }
       }),

@@ -27,6 +27,7 @@ import '../util/app_beta.dart';
 import '../util/http_overrides_stub.dart'
     if (dart.library.io) '../util/http_overrides_io.dart';
 import '../util/platform_detection.dart';
+import '../util/windows_video_watch_diagnostics.dart';
 import 'modules/app_module.dart';
 import 'modules/auth_module.dart';
 import 'modules/server_module.dart';
@@ -47,21 +48,27 @@ bool _legacyStereoAacFallbackDefaultForPlatform() {
 }
 
 String _clientName() {
-  if (PlatformDetection.isAppleTV) return 'Moonfin for tvOS';
+  if (const bool.fromEnvironment('SPESHMEDIA_CLIENT', defaultValue: true)) {
+    if (PlatformDetection.isAndroid && PlatformDetection.isTV) return 'SpeshTV for Android TV';
+    if (PlatformDetection.isAndroid) return 'SpeshTV for Android';
+    if (PlatformDetection.isWindows) return 'SpeshTV for Windows';
+    return 'SpeshTV';
+  }
+  if (PlatformDetection.isAppleTV) return 'SpeshTV for tvOS';
   if (PlatformDetection.isAndroid && PlatformDetection.isTV) {
-    return 'Moonfin for Android TV';
+    return 'SpeshTV for Android TV';
   }
   if (PlatformDetection.isWeb) {
     return webRuntimeConfig.pluginMode
-        ? 'Moonfin for Web'
-        : 'Moonfin on Github';
+        ? 'SpeshTV for Web'
+        : 'SpeshTV on GitHub';
   }
-  if (PlatformDetection.isAndroid) return 'Moonfin for Android';
-  if (PlatformDetection.isIOS) return 'Moonfin for iOS';
-  if (PlatformDetection.isMacOS) return 'Moonfin for macOS';
-  if (PlatformDetection.isWindows) return 'Moonfin for Windows';
-  if (PlatformDetection.isLinux) return 'Moonfin for Linux';
-  return 'Moonfin';
+  if (PlatformDetection.isAndroid) return 'SpeshTV for Android';
+  if (PlatformDetection.isIOS) return 'SpeshTV for iOS';
+  if (PlatformDetection.isMacOS) return 'SpeshTV for macOS';
+  if (PlatformDetection.isWindows) return 'SpeshTV for Windows';
+  if (PlatformDetection.isLinux) return 'SpeshTV for Linux';
+  return 'SpeshTV';
 }
 
 String _joinNonEmpty(List<String?> parts, String separator) {
@@ -164,6 +171,8 @@ Future<String> _resolveAppVersion() async {
   }
   try {
     final info = await pkg.PackageInfo.fromPlatform();
+    WindowsVideoWatchDiagnostics.packageVersion = info.version;
+    WindowsVideoWatchDiagnostics.packageBuild = info.buildNumber;
     return info.version.trim().isNotEmpty ? info.version.trim() : '0.1.0';
   } catch (_) {
     return '0.1.0';

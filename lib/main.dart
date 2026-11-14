@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +8,8 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:get_it/get_it.dart';
 import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:media_kit/media_kit.dart';
-import 'package:moonfin_design/moonfin_design.dart' show LiquidGlassWidgets;
+import 'package:moonfin_design/moonfin_design.dart' show LiquidGlassWidgets, ThemeRegistry, ThemeSpec;
+import 'ui/widgets/spesh_brand.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:playback_core/playback_core.dart';
 import 'package:screen_retriever/screen_retriever.dart';
@@ -32,9 +34,7 @@ import 'data/services/media_server_client_factory.dart';
 import 'data/services/crash_report_service.dart';
 import 'data/services/log_service.dart';
 import 'data/services/storage_path_service.dart';
-import 'util/macos_touch_input.dart';
 import 'util/scroll_sensitivity_binding.dart';
-import 'util/silo_image_hooks.dart';
 import 'util/webview_environment.dart';
 import 'data/services/theme_store_service.dart';
 import 'di/injection.dart';
@@ -48,7 +48,6 @@ import 'playback/display_hdr_probe.dart';
 import 'playback/media_browse_service.dart';
 import 'playback/mpris_service.dart';
 import 'playback/playback_lifecycle_handler.dart';
-import 'playback/subtitle_fonts.dart';
 import 'platform/background_refresh.dart';
 import 'platform/web_runtime_config.dart';
 import 'preference/preference_constants.dart';
@@ -62,10 +61,10 @@ import 'util/device_performance.dart';
 import 'ui/navigation/app_router.dart';
 import 'ui/screensaver/screensaver_controller.dart';
 import 'ui/widgets/reader/epub_js_view.dart';
-import 'util/device_hinge.dart';
 import 'util/platform_detection.dart';
 import 'util/process_exit_reporter.dart';
 import 'util/system_ui.dart';
+import 'util/spesh_load_metrics.dart';
 import 'util/tv_image_cache_stub.dart'
     if (dart.library.io) 'util/tv_image_cache_io.dart';
 
@@ -326,13 +325,6 @@ Future<void> _detectAndSetTvMode() async {
       final isTV = await channel.invokeMethod<bool>('isTvDevice');
       if (isTV != null) {
         PlatformDetection.setTvMode(isTV);
-        if (isTV) {
-          try {
-            final touch =
-                await channel.invokeMethod<bool>('supportsTouchLayout');
-            if (touch != null) PlatformDetection.setSupportsTouchLayout(touch);
-          } catch (_) {}
-        }
         return;
       }
     } catch (_) {}
@@ -858,9 +850,9 @@ Future<void> autoDownloadBackgroundMain() =>
     auto_download_bg.autoDownloadBackgroundMain();
 
 void main() async {
+  final startupTimer = Stopwatch()..start();
   configureHttpOverrides();
   ScrollSensitivityBinding.ensureInitialized();
-  MacosTouchInput.install();
 
   // Pre-warms the liquid_glass_widgets shader programs so the first glass
   // pane doesn't white-flash. Cheap no-op on tiers where the package
@@ -910,6 +902,12 @@ void main() async {
   if (PlatformDetection.isWeb) {
     await loadWebRuntimeConfig();
   }
+  if (speshWeb) {
+    for (final id in ['spesha-style', 'speshflix', 'speshprime', 'speshapple']) {
+      final json = jsonDecode(await rootBundle.loadString('assets/themes/$id.json'));
+      ThemeRegistry.registerStoreTheme(ThemeSpec.fromJson(Map<String, dynamic>.from(json as Map)));
+    }
+  }
 
   if (PlatformDetection.isDesktop) {
     await windowManager.ensureInitialized();
@@ -943,7 +941,6 @@ void main() async {
   }
 
   _configureImageCache();
-  installSiloImageHooks();
   _capSkiaCache();
   await configureImageDiskCache(tier: _resolvedTier());
 
@@ -1013,10 +1010,6 @@ void main() async {
     GetIt.instance<StoragePathService>(),
   ).loadAndRegister();
 
-  if (PlatformDetection.isDesktop) {
-    await _restoreWindowGeometry();
-  }
-
   // Audio and notification services are only needed once playback or a
   // download can happen, so they initialize after the first frame.
   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1047,9 +1040,14 @@ void main() async {
     GetIt.instance<AirPlayCommandBridge>().start();
   } catch (_) {}
 
-  DeviceHinge.init();
-
   runApp(const MoonfinApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Native resizing before the first Flutter frame can re-enter engine startup.
+    if (PlatformDetection.isDesktop) {
+      unawaited(_restoreWindowGeometry());
+    }
+    SpeshLoadMetrics.record('startup-first-frame', startupTimer);
+  });
 }
 
 /// Startup work that runs after the first frame. The internal order matters:
@@ -1081,8 +1079,6 @@ Future<void> _initDeferredStartupServices(UserPreferences prefs) async {
 
   await _detectAndApplyAudioCapabilities(prefs);
 
-  unawaited(SubtitleFonts.instance.follow(prefs));
-
   try {
     await GetIt.instance<DownloadNotificationService>().initialize();
   } catch (_) {}
@@ -1097,6 +1093,12 @@ Future<void> _initDeferredStartupServices(UserPreferences prefs) async {
     await GetIt.instance<SeerrNotificationService>().initialize();
     await GetIt.instance<SeerrNotificationService>().handleColdStart();
   } catch (_) {}
+
+  if (PlatformDetection.isMobile) {
+    try {
+      await GetIt.instance<PushMessagingService>().initialize();
+    } catch (_) {}
+  }
 
   // Audio session ownership differs per platform:
   // - Android: MoonfinAudioHandler acquires audio focus per playback, and skips

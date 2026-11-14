@@ -7,9 +7,7 @@ import '../../../l10n/app_localizations.dart';
 import '../../../preference/button_layout.dart';
 import '../../../preference/user_preferences.dart';
 import '../../../syncplay/syncplay_manager.dart';
-import '../../../watch_party/silo_watch_party_manager.dart';
 import '../../../util/platform_detection.dart';
-import '../../../util/signed_in_server_features.dart';
 import '../../widgets/live_tv/incomplete_recording.dart';
 
 /// The details screen action buttons a user can arrange. Play is absent on
@@ -83,8 +81,6 @@ enum DetailButton {
       DetailButton.watchWithGroup => _syncPlayAvailable,
       DetailButton.keepAsComplete =>
         _incompleteRecordingsSupported && canManageLiveTv(),
-      // Not when no signed-in server has playlists (all Silo, say).
-      DetailButton.playlist => playlistsOnAnySignedInServer(),
       _ => true,
     };
   }
@@ -133,12 +129,7 @@ enum DetailButton {
   static bool get _syncPlayAvailable {
     try {
       if (GetIt.instance.isRegistered<SyncPlayManager>()) {
-        final syncPlay = GetIt.instance<SyncPlayManager>();
-        // Silo and Moonbase have their own rooms, under the same switch.
-        final party = GetIt.instance<SiloWatchPartyManager>();
-        return syncPlay.syncPlayEnabled ||
-            (syncPlay.syncPlayConfigured &&
-                (party.activeSiloClient != null || party.moonbaseAvailable));
+        return GetIt.instance<SyncPlayManager>().syncPlayEnabled;
       }
       return GetIt.instance<UserPreferences>().get(UserPreferences.syncPlayEnabled);
     } catch (_) {

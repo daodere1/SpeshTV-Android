@@ -33,7 +33,72 @@ int main() {
     return 1;
   }
 
+  auto onScreen = [parent]() {
+    RECT bounds{};
+    MONITORINFO monitor{};
+    monitor.cbSize = sizeof(monitor);
+    if (!GetWindowRect(parent, &bounds) ||
+        !GetMonitorInfo(MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST),
+                        &monitor)) return false;
+    const RECT& area = monitor.rcWork;
+    return bounds.left >= area.left && bounds.top >= area.top &&
+           bounds.right <= area.right && bounds.bottom <= area.bottom;
+  };
+  if (!onScreen()) {
+    std::fprintf(stderr, "FAIL: first show left the runner off screen\n");
+    return 1;
+  }
+  SetWindowPos(parent, nullptr, -50000, -50000, 320, 200,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  if (!onScreen()) {
+    std::fprintf(stderr, "FAIL: asynchronously restored bounds stayed off screen\n");
+    return 1;
+  }
+  SetWindowPos(parent, nullptr, 10, -180, 320, 200,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  if (!onScreen()) {
+    std::fprintf(stderr, "FAIL: partially visible window left its title bar unreachable\n");
+    return 1;
+  }
+
   // A plugin can show the native parent without calling the runner's Show().
+  SendMessage(parent, WM_ENTERSIZEMOVE, 0, 0);
+  SetWindowPos(parent, nullptr, 50000, 50000, 320, 200,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  if (onScreen()) {
+    std::fprintf(stderr, "FAIL: safeguard interfered with interactive dragging\n");
+    return 1;
+  }
+  SendMessage(parent, WM_EXITSIZEMOVE, 0, 0);
+  if (!onScreen()) {
+    std::fprintf(stderr, "FAIL: completing a drag left the window unreachable\n");
+    return 1;
+  }
+
+  const LONG_PTR style = GetWindowLongPtr(parent, GWL_STYLE);
+  SetWindowLongPtr(parent, GWL_STYLE, style & ~WS_CAPTION);
+  SetWindowPos(parent, nullptr, 50000, 50000, 320, 200,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  if (onScreen()) {
+    std::fprintf(stderr, "FAIL: safeguard changed borderless playback bounds\n");
+    return 1;
+  }
+  SetWindowLongPtr(parent, GWL_STYLE, style);
+  // window_manager fullscreen keeps the caption bits but drops this frame.
+  SetWindowLongPtr(parent, GWL_STYLE, style & ~(WS_THICKFRAME | WS_MAXIMIZEBOX));
+  SetWindowPos(parent, nullptr, 50000, 50000, 320, 200,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  if (onScreen()) {
+    std::fprintf(stderr, "FAIL: safeguard changed plugin fullscreen bounds\n");
+    return 1;
+  }
+  SetWindowLongPtr(parent, GWL_STYLE, style);
+  SendMessage(parent, WM_DISPLAYCHANGE, 0, 0);
+  if (!onScreen()) {
+    std::fprintf(stderr, "FAIL: display change did not recover the normal window\n");
+    return 1;
+  }
+
   ShowWindow(parent, SW_HIDE);
   ShowWindow(child, SW_HIDE);
   ShowWindow(parent, SW_SHOWNOACTIVATE);

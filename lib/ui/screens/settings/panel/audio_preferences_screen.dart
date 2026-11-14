@@ -247,7 +247,7 @@ class _AudioPreferencesScreenState extends State<_AudioPreferencesScreen> {
               ),
             ],
           ),
-          _SectionHeader(l10n.settingsAudioStreamSection),
+          const _SectionHeader('Audio Stream'),
           adaptiveListSection(
             children: [
               StringPickerPreferenceTile(
@@ -278,7 +278,7 @@ class _AudioPreferencesScreenState extends State<_AudioPreferencesScreen> {
           ),
 
           if (!PlatformDetection.isWeb) ...[
-            _SectionHeader(l10n.settingsAudioOutputSection),
+            const _SectionHeader('Audio Output'),
             adaptiveListSection(
               children: [
                 EnumPreferenceTile<AudioPassthroughMode>(
@@ -340,7 +340,7 @@ class _AudioPreferencesScreenState extends State<_AudioPreferencesScreen> {
               ],
             ),
             if (isManual && _showPassthroughToggles) ...[
-              _SectionHeader(l10n.settingsPassthroughSettingsSection),
+              const _SectionHeader('Passthrough Settings'),
               adaptiveListSection(
                 children: [
                   SwitchPreferenceTile(
@@ -396,7 +396,7 @@ class _AudioPreferencesScreenState extends State<_AudioPreferencesScreen> {
                 ],
               ),
             ],
-            _SectionHeader(l10n.settingsAdvancedSection),
+            const _SectionHeader('Advanced'),
             adaptiveListSection(
               children: [
                 IntPickerPreferenceTile(

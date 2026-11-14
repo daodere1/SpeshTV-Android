@@ -6,7 +6,6 @@ import 'package:get_it/get_it.dart';
 import 'package:server_core/server_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../util/signed_in_server_features.dart';
 import 'media_server_client_factory.dart';
 
 /// A single user-saved position inside an audiobook.
@@ -144,9 +143,7 @@ class AudiobookBookmarksService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_dirtyKey(serverId, itemId), true);
     final client = _resolveClient(serverId);
-    // No server copy without the Moonfin plugin (Silo): the bookmarks stay
-    // on this device, still marked unsynced.
-    if (client == null || !serverHasMoonfinPlugin(client)) return;
+    if (client == null) return;
     if (await _syncToMoonbase(client, itemId, list)) {
       await prefs.remove(_dirtyKey(serverId, itemId));
     }
@@ -161,7 +158,7 @@ class AudiobookBookmarksService {
   /// Local wins only while it holds an edit the server hasn't taken.
   Future<void> syncFromServer(String serverId, String itemId) async {
     final client = _resolveClient(serverId);
-    if (client == null || !serverHasMoonfinPlugin(client)) return;
+    if (client == null) return;
     final token = client.accessToken;
     if (token == null || token.isEmpty) return;
 

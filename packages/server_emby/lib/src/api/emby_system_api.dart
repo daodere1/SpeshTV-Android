@@ -25,16 +25,11 @@ class EmbySystemApi implements SystemApi {
       // as json, which would fail to decode.
       final response = await _dio.get(
         '/System/Ping',
-        options: Options(
-          responseType: ResponseType.plain,
-          receiveTimeout: SystemApi.pingTimeout,
-        ),
+        options: Options(responseType: ResponseType.plain),
       );
       return response.statusCode == 200;
-    } catch (e) {
-      // Emby turns down a ping from outside its own network when it carries
-      // no valid token, and that refusal still came from the server.
-      return pingAnsweredDespite(e);
+    } catch (_) {
+      return false;
     }
   }
 }

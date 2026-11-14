@@ -132,10 +132,8 @@ class _RequestInitialFocusState extends State<RequestInitialFocus> {
       if (identical(node, scope)) continue;
       if (node.context == null) continue;
       if (!node.canRequestFocus || node.skipTraversal) continue;
-      // The request only lands in a microtask, so hasFocus can't confirm it
-      // here. Asking the next node too would hand focus to the last one asked.
       scope.requestFocus(node);
-      return true;
+      if (node.hasFocus) return true;
     }
     return false;
   }

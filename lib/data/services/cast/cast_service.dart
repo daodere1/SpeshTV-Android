@@ -6,7 +6,6 @@ import 'package:logger/logger.dart';
 import '../../models/aggregated_item.dart';
 import '../log_service.dart';
 import 'cast_provider.dart';
-import 'cast_session_reporter.dart';
 import 'cast_target.dart';
 import 'cast_transport_controls.dart';
 import 'native_airplay_channel.dart';
@@ -27,16 +26,6 @@ class CastService {
   final ValueNotifier<int> remotePositionNotifier = ValueNotifier(0);
   final ValueNotifier<double?> remoteVolumeNotifier = ValueNotifier(null);
   Timer? _remotePollTimer;
-
-  /// Reports a cast to its server session where the server needs it (Silo).
-  late final CastSessionReporter sessionReporter = CastSessionReporter(
-    read: () => (
-      active: activeKindNotifier.value != null,
-      itemId: castItemNotifier.value?.id,
-      state: remoteStateNotifier.value,
-      positionTicks: remotePositionNotifier.value,
-    ),
-  );
   static const _remotePollInterval = Duration(seconds: 5);
 
   /// Latest receiver-side failure. A load request reports success as soon as
@@ -280,21 +269,6 @@ class CastService {
     remoteVolumeNotifier.value = null;
     remoteErrorNotifier.value = null;
     _startRemotePolling(target.kind);
-
-    final playback = provider is CastServerPlaybackSource
-        ? (provider as CastServerPlaybackSource).takeServerPlayback()
-        : null;
-    if (playback == null) {
-      unawaited(sessionReporter.end());
-    } else {
-      unawaited(
-        sessionReporter.begin(
-          service: playback.service,
-          item: playback.item,
-          resolution: playback.resolution,
-        ),
-      );
-    }
   }
 
   Future<void> play(CastTargetKind kind) async {
@@ -316,7 +290,6 @@ class CastService {
     final provider = _controlProviderForKind(kind);
     await provider.stop(kind);
     if (activeKindNotifier.value == kind) {
-      unawaited(sessionReporter.end());
       _stopRemotePolling();
       activeKindNotifier.value = null;
       activeTargetNotifier.value = null;
@@ -347,7 +320,6 @@ class CastService {
   }
 
   Future<void> dispose() async {
-    await sessionReporter.end();
     _stopRemotePolling();
     for (final subscription in _nativeEventSubscriptions) {
       await subscription.cancel();

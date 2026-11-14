@@ -2,29 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:moonfin/data/services/deep_link_service.dart';
 
 void main() {
+  test('SpeshTV fork accepts its independent desktop link scheme', () {
+    expect(DeepLinkService.routeForDeepLink(Uri.parse('speshtv://play?id=movie')),
+      const bool.fromEnvironment('SPESHMEDIA_CLIENT') ? '/item/movie?autoPlay=true' : null);
+  });
   group('routeForDeepLink', () {
-    test('a party invite keeps its server id and address for the link '
-        'screen', () {
-      expect(
-        DeepLinkService.routeForDeepLink(
-          Uri.parse(
-            'moonfin://party?server=s9&code=K7Q29M'
-            '&address=https%3A%2F%2Fjf.example',
-          ),
-        ),
-        '/watch-party?code=K7Q29M&serverId=s9'
-        '&address=https%3A%2F%2Fjf.example',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(Uri.parse('moonfin://party?code=AB')),
-        '/watch-party?code=AB',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(Uri.parse('moonfin://party?server=s1')),
-        isNull,
-      );
-    });
-
     test('returns null for non-moonfin schemes', () {
       expect(
         DeepLinkService.routeForDeepLink(
@@ -45,23 +27,6 @@ void main() {
       expect(
         DeepLinkService.routeForDeepLink(Uri.parse('moonfin://item?id=abc123')),
         '/item/abc123',
-      );
-    });
-
-    test('routes the Live TV guide and recordings', () {
-      expect(
-        DeepLinkService.routeForDeepLink(Uri.parse('moonfin://live-tv/guide')),
-        '/live-tv/guide',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(
-          Uri.parse('moonfin://live-tv/recordings'),
-        ),
-        '/live-tv/recordings',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(Uri.parse('moonfin://live-tv/other')),
-        isNull,
       );
     });
 
@@ -114,29 +79,6 @@ void main() {
           Uri.parse('moonfin://search?query=the%20matrix'),
         ),
         '/search?query=the%20matrix',
-      );
-    });
-
-    test('routes home, forwarding serverId and userId', () {
-      expect(
-        DeepLinkService.routeForDeepLink(Uri.parse('moonfin://home')),
-        '/home',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(
-          Uri.parse('moonfin://home?serverId=srv-1&userId=user-1'),
-        ),
-        '/home?serverId=srv-1&userId=user-1',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(
-          Uri.parse('moonfin://home?serverId=&userId='),
-        ),
-        '/home',
-      );
-      expect(
-        DeepLinkService.routeForDeepLink(Uri.parse('moonfin://home?id=abc')),
-        '/home',
       );
     });
 

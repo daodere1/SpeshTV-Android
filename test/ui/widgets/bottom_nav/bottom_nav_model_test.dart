@@ -83,7 +83,6 @@ void main() {
       bool shuffle = true,
       bool syncPlay = false,
       bool quickConnect = false,
-      bool remoteControl = true,
       Set<BottomNavTab> alsoOnBar = const {},
     }) =>
         resolveHubTiles(
@@ -94,7 +93,6 @@ void main() {
           shuffle: shuffle,
           syncPlay: syncPlay,
           quickConnect: quickConnect,
-          remoteControl: remoteControl,
           alsoOnBar: alsoOnBar,
         );
 
@@ -109,16 +107,7 @@ void main() {
       ]);
     });
 
-    test('no remote control tile for a server without it (Silo)', () {
-      expect(
-        tiles(remoteControl: false),
-        isNot(contains(
-          const BottomNavHubTile.action(BottomNavHubAction.remoteControl),
-        )),
-      );
-    });
-
-        test('Kids Mode keeps what children may use', () {
+    test('Kids Mode keeps what children may use', () {
       final kids = tiles(
         gates: const BottomNavTabGates(
           kidsMode: true,

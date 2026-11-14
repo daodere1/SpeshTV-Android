@@ -45,32 +45,6 @@ class _PluginScreenState extends State<_PluginScreen> {
     }
   }
 
-  MediaServerClient? get _client =>
-      GetIt.instance.isRegistered<MediaServerClient>()
-      ? GetIt.instance<MediaServerClient>()
-      : null;
-
-  Future<void> _refresh(BuildContext context) async {
-    final client = _client;
-    if (client == null) return;
-    final l10n = AppLocalizations.of(context);
-    final syncService = GetIt.instance<PluginSyncService>();
-    forgetMoonbaseEndpoint(client);
-    await syncService.refreshAvailability(client);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            syncService.pluginAvailable
-                ? l10n.pluginDetected
-                : l10n.pluginNotDetected,
-          ),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return withCleanSettingsTypography(
@@ -89,7 +63,25 @@ class _PluginScreenState extends State<_PluginScreen> {
                   IconButton(
                     focusNode: _refreshFocusNode,
                     icon: const Icon(Icons.refresh),
-                    onPressed: () => _refresh(context),
+                    onPressed: () async {
+                      if (GetIt.instance.isRegistered<MediaServerClient>()) {
+                        final client = GetIt.instance<MediaServerClient>();
+                        final syncService = GetIt.instance<PluginSyncService>();
+                        await syncService.refreshAvailability(client);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                syncService.pluginAvailable
+                                    ? l10n.pluginDetected
+                                    : l10n.pluginNotDetected,
+                              ),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      }
+                    },
                   ),
                 ],
               ),
@@ -98,19 +90,7 @@ class _PluginScreenState extends State<_PluginScreen> {
                 padding: EdgeInsets.only(
                   bottom: 48 + MediaQuery.paddingOf(context).bottom,
                 ),
-                children: [
-                  if (_client case final client?)
-                    if (plexMoonbasePreference(client)
-                        case final moonbaseUrl?)
-                      _EditableStringPreferenceTile(
-                        preference: moonbaseUrl,
-                        title: l10n.moonbaseAddress,
-                        icon: Icons.dns_outlined,
-                        hintText: plexMoonbaseDefault(client) ?? '',
-                        onChanged: (_) => _refresh(context),
-                      ),
-                  const PluginSettingsSection(),
-                ],
+                children: const [PluginSettingsSection()],
               ),
             ),
           );

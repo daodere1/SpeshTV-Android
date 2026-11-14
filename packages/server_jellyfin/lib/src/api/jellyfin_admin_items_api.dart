@@ -91,7 +91,7 @@ class JellyfinAdminItemsApi implements AdminItemsApi {
       searchRemote('Person', query);
 
   @override
-  Future<String?> applyRemoteSearchResult(
+  Future<void> applyRemoteSearchResult(
     String itemId,
     Map<String, dynamic> result, {
     bool replaceAllImages = true,
@@ -101,7 +101,6 @@ class JellyfinAdminItemsApi implements AdminItemsApi {
       queryParameters: {'replaceAllImages': replaceAllImages},
       data: result,
     );
-    return null;
   }
 
   @override

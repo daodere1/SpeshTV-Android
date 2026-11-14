@@ -86,5 +86,4 @@ void main() {
       expect(result.playMethod, isNot(StreamPlayMethod.directPlay));
     },
   );
-
 }

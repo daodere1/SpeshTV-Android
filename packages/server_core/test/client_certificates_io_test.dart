@@ -86,7 +86,6 @@ void main() {
     });
     // The server's certificate comes from the test CA.
     gAllowSelfSignedCertificates = true;
-    gIsOwnServerHost = (_) => true;
     setClientCertificates(const [
       ClientCertificateMaterial(
         host: 'LocalHost.',
@@ -99,7 +98,6 @@ void main() {
   tearDown(() async {
     setClientCertificates(const []);
     gAllowSelfSignedCertificates = false;
-    gIsOwnServerHost = (_) => false;
     await server.close(force: true);
   });
 

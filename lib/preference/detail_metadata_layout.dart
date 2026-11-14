@@ -5,7 +5,6 @@ import '../data/services/plugin_sync_service.dart';
 import '../l10n/app_localizations.dart';
 import 'button_layout.dart';
 import 'user_preferences.dart';
-import 'seerr_preferences.dart';
 
 /// One metadata item shown on the Details screen's primary metadata line.
 enum DetailMetadataItem {
@@ -30,7 +29,7 @@ enum DetailMetadataItem {
     DetailMetadataItem.status => l10n.detailMetadataStatus,
     DetailMetadataItem.genres => l10n.detailMetadataGenres,
     DetailMetadataItem.seerrAvailability =>
-      seerrBrand(l10n.detailMetadataSeerrAvailability),
+      l10n.detailMetadataSeerrAvailability,
     DetailMetadataItem.upcomingEpisodeDate =>
       l10n.detailMetadataUpcomingEpisodeDate,
   };
@@ -40,7 +39,7 @@ enum DetailMetadataItem {
       l10n.detailMetadataUpcomingEpisodeDateSubtitle,
     DetailMetadataItem.status => l10n.detailMetadataStatusSubtitle,
     DetailMetadataItem.seerrAvailability =>
-      seerrBrand(l10n.detailMetadataSeerrAvailabilitySubtitle),
+      l10n.detailMetadataSeerrAvailabilitySubtitle,
     _ => null,
   };
 

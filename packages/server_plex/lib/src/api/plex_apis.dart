@@ -180,7 +180,7 @@ class PlexUsersApi implements UsersApi {
 
   @override
   Future<UserConfiguration> getUserConfiguration() async =>
-      const UserConfiguration(hidePlayedInLatest: false);
+      const UserConfiguration();
 
   @override
   Future<void> updateUserConfiguration(UserConfiguration config) async {}

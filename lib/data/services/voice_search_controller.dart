@@ -22,12 +22,9 @@ class VoiceSearchController extends ChangeNotifier {
   VoiceSearchController({stt.SpeechToText? speechToText})
     : _speechToText = speechToText ?? stt.SpeechToText();
 
-  /// Linux and tvOS have no speech recognizer for the plugin to use, and a
-  /// Fire TV keeps its remote's microphone for Alexa.
+  /// Linux and tvOS have no speech recognizer for the plugin to use.
   static bool get isSupported =>
-      !PlatformDetection.isLinux &&
-      !PlatformDetection.isAppleTV &&
-      !PlatformDetection.isFireTv;
+      !PlatformDetection.isLinux && !PlatformDetection.isAppleTV;
 
   final stt.SpeechToText _speechToText;
   VoidCallback? _onListenError;

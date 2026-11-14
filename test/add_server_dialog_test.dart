@@ -87,12 +87,7 @@ void main() {
   _MockServerRepository repoThatFinds(List<Server> saved) {
     final repo = _MockServerRepository();
     when(() => repo.servers).thenReturn(saved);
-    when(
-      () => repo.addServer(
-        any(),
-        offerSiloNative: any(named: 'offerSiloNative'),
-      ),
-    ).thenAnswer((_) async => _server);
+    when(() => repo.addServer(any())).thenAnswer((_) async => _server);
     when(() => repo.deleteServer(any())).thenAnswer((_) async {});
     return repo;
   }
@@ -143,12 +138,7 @@ void main() {
   ) async {
     final repo = _MockServerRepository();
     when(() => repo.servers).thenReturn(const []);
-    when(
-      () => repo.addServer(
-        any(),
-        offerSiloNative: any(named: 'offerSiloNative'),
-      ),
-    ).thenAnswer((_) async => null);
+    when(() => repo.addServer(any())).thenAnswer((_) async => null);
     when(() => repo.lastFailure).thenReturn(
       const ServerUnableToConnect(
         candidatesTried: ['https://localhos', 'http://localhos'],
@@ -176,12 +166,7 @@ void main() {
       ),
       isTrue,
     );
-    verify(
-      () => repo.addServer(
-        'https://localhos',
-        offerSiloNative: any(named: 'offerSiloNative'),
-      ),
-    ).called(1);
+    verify(() => repo.addServer('https://localhos')).called(1);
   });
 
   testWidgets('an empty address opens on the choices', (tester) async {

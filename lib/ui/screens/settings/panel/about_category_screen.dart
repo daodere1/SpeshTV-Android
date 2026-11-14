@@ -13,7 +13,8 @@ class _AboutCategoryScreen extends StatelessWidget {
         children: [
           const SizedBox(height: 24),
           Center(
-            child: Image.asset('assets/images/logo_and_text.png', height: 72),
+            child: speshWeb ? const SpeshBrand(height: 72)
+                : Image.asset('assets/images/logo_and_text.png', height: 72),
           ),
           const SizedBox(height: 8),
           Center(
@@ -23,6 +24,7 @@ class _AboutCategoryScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
+          if (speshWeb) const Center(child: Text('SpeshTV is a customized fork of Moonfin.')),
           const Divider(),
           _SectionHeader(l10n.settingsAppInfo),
           adaptiveListSection(
@@ -33,7 +35,7 @@ class _AboutCategoryScreen extends StatelessWidget {
                 title: Text(l10n.version),
                 subtitle: Text(appVersion),
                 trailing: const SizedBox.shrink(),
-                onTap: () => AfterHoursTrigger.press(context),
+                onTap: () {},
               ),
               if (AppDistribution.supportsInAppUpdates)
                 const _CheckForUpdatesTile(),
@@ -43,7 +45,7 @@ class _AboutCategoryScreen extends StatelessWidget {
                 subtitle: Text(l10n.sourceCodeUrl),
                 onTap: () => showQrOrLaunch(
                   context,
-                  url: 'https://github.com/Moonfin-Client/Moonfin-Core',
+                  url: 'https://github.com/daodere1/SpeshTV-Android',
                   title: l10n.sourceCode,
                 ),
               ),
@@ -53,7 +55,7 @@ class _AboutCategoryScreen extends StatelessWidget {
                 subtitle: Text(l10n.settingsReportAnIssueSubtitle),
                 onTap: () => showQrOrLaunch(
                   context,
-                  url: 'https://github.com/Moonfin-Client/Moonfin-Core/issues',
+                  url: 'https://github.com/daodere1/SpeshTV-Android/issues',
                   title: l10n.settingsReportAnIssue,
                 ),
               ),
@@ -88,16 +90,6 @@ class _AboutCategoryScreen extends StatelessWidget {
                 },
               ),
               _TvSettingsListTile(
-                leading: const Icon(Icons.forum),
-                title: Text(l10n.settingsJoinDiscord),
-                subtitle: Text(l10n.settingsJoinDiscordSubtitle),
-                onTap: () => showQrOrLaunch(
-                  context,
-                  url: 'https://discord.gg/moonfin',
-                  title: l10n.settingsJoinTheDiscord,
-                ),
-              ),
-              _TvSettingsListTile(
                 leading: const Icon(Icons.favorite),
                 title: Text(l10n.settingsSupportMoonfin),
                 subtitle: Text(l10n.settingsSupportMoonfinSubtitle),
@@ -115,7 +107,7 @@ class _AboutCategoryScreen extends StatelessWidget {
                 onTap: () => showQrOrLaunch(
                   context,
                   url:
-                      'https://github.com/Moonfin-Client/Moonfin-Core/blob/main/LICENSE',
+                      'https://github.com/daodere1/SpeshTV-Android/blob/main/LICENSE',
                   title: l10n.settingsLicenses,
                 ),
               ),
@@ -125,7 +117,7 @@ class _AboutCategoryScreen extends StatelessWidget {
                 subtitle: Text(l10n.settingsPrivacyPolicySubtitle),
                 onTap: () => showQrOrLaunch(
                   context,
-                  url: 'https://moonfin.io/privacy',
+                  url: 'https://github.com/daodere1/SpeshTV-Android/blob/main/PRIVACY_POLICY.md',
                   title: l10n.settingsPrivacyPolicy,
                 ),
               ),

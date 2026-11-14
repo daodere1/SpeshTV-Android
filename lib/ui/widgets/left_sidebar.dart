@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'spesh_brand.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -36,7 +37,7 @@ import 'settings/settings_panel.dart';
 import '../screens/downloads/downloads_panel.dart';
 import 'downloads_nav_slot.dart';
 import 'friends_nav_slot.dart';
-import '../screens/watch_party/watch_together_route.dart';
+import '../screens/syncplay/syncplay_screen.dart';
 import '../screens/settings/settings_side_panel.dart';
 import 'seerr_icons.dart';
 import 'server_messages_dialog.dart';
@@ -50,8 +51,8 @@ import '../../data/models/aggregated_item.dart';
 import '../../data/services/media_server_client_factory.dart';
 import '../navigation/app_router.dart';
 import 'offline_aware_image.dart';
+import 'paced_network_image.dart';
 import 'adaptive/sf_symbol.dart';
-import 'user_avatar_image.dart';
 
 const _kExpandedWidthDesktop = 240.0;
 const _kExpandedWidthMobile = 260.0;
@@ -996,8 +997,8 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
               final items = <Widget>[
                 _SidebarItem(
                   key: const ValueKey('sidebar-home'),
-                  icon: Icons.home_rounded,
-                  label: l10n.home,
+                  icon: speshWeb ? Icons.live_tv_outlined : Icons.home_rounded,
+                  label: speshWeb ? 'SpeshTV' : l10n.home,
                   baseColor: nextMainSidebarColor(),
                   focusNode: _homeFocusNode,
                   showLabel: _showLabels,
@@ -1101,7 +1102,7 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
                   _SidebarItem(
                     key: const ValueKey('sidebar-syncplay'),
                     icon: Icons.groups_rounded,
-                    label: l10n.watchParties,
+                    label: l10n.syncPlay,
                     baseColor: nextMainSidebarColor(),
                     showLabel: _showLabels,
                     onPressed: () {
@@ -1109,7 +1110,7 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
                       _markNavigationAwayFromSidebar();
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
-                          builder: (_) => watchTogetherScreen(),
+                          builder: (_) => const SyncPlayScreen(),
                         ),
                       );
                     },
@@ -1133,25 +1134,6 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
                       }
                       _markNavigationAwayFromSidebar();
                       context.navigateTopLevel(Destinations.seerrDiscover);
-                    },
-                  ),
-                if (!kidsMode &&
-                    _prefs.get(UserPreferences.showCalendarButton) &&
-                    GetIt.instance<PluginSyncService>().calendarAvailable)
-                  _SidebarItem(
-                    key: const ValueKey('sidebar-calendar'),
-                    baseColor: nextMainSidebarColor(),
-                    icon: Icons.calendar_month_rounded,
-                    label: l10n.calendar,
-                    showLabel: _showLabels,
-                    onPressed: () {
-                      _onNavigate();
-                      if (_isActive(Destinations.calendar)) {
-                        _exitSidebarToContent();
-                        return;
-                      }
-                      _markNavigationAwayFromSidebar();
-                      context.navigateTopLevel(Destinations.calendar);
                     },
                   ),
                 if (showLibraries && showLibrariesIndividually)
@@ -1365,12 +1347,27 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
         ),
       ),
       child: ClipOval(
-        // Decoded at the painted size, SVG presets drawn as vectors.
-        child: UserAvatarImage(
-          url: _userImageUrl,
-          size: 40,
-          fallback: fallback,
-        ),
+        child: _userImageUrl != null
+            ? Image(
+                // The server sends the avatar at its stored size, so decode
+                // at the painted size instead of a full bitmap per user.
+                image: ResizeImage.resizeIfNeeded(
+                  ArtworkDecode.widthFor(
+                    40,
+                    MediaQuery.devicePixelRatioOf(context),
+                  ),
+                  null,
+                  PacedNetworkImage(
+                    _userImageUrl!,
+                    headers: serverImageHeaders,
+                  ),
+                ),
+                fit: BoxFit.cover,
+                width: 40,
+                height: 40,
+                errorBuilder: (_, _, _) => fallback,
+              )
+            : fallback,
       ),
     );
 

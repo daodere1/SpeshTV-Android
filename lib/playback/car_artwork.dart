@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:server_core/server_core.dart' show MediaServerClient;
@@ -26,29 +24,16 @@ String? carAuthedImageUrl(MediaServerClient client, String? url) =>
 /// The provider is exported so the car process can read it, so it only serves
 /// hosts we have actually wrapped. [wrap] records each host and [persistHosts]
 /// writes them to the shared preferences the provider checks.
-///
-/// The launcher and car host keep these URIs in their own storage, so [wrap]
-/// also takes the server token out of the URL and the provider adds it back
-/// from the same preferences.
 class CarArtwork {
   CarArtwork._();
   static final CarArtwork instance = CarArtwork._();
 
   static const _hostsKey = 'moonfin_art_hosts';
-  static const _tokensKey = 'moonfin_art_tokens';
-  static const _tokenParams = {
-    'apikey',
-    'api_key',
-    'x-emby-token',
-    'x-plex-token',
-    'token',
-  };
 
   String? _authority;
   Future<void>? _init;
   final Set<String> _hosts = {};
-  final Map<String, String> _tokens = {};
-  bool _dirty = false;
+  bool _hostsDirty = false;
 
   bool get _isAndroid =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -79,53 +64,29 @@ class CarArtwork {
     if (url.startsWith('content://')) return Uri.tryParse(url);
     final authority = _authority;
     if (authority == null) return Uri.tryParse(url);
-    final parsed = Uri.tryParse(url);
-    final host = parsed?.host;
+    final host = Uri.tryParse(url)?.host;
     if (host != null && host.isNotEmpty && _hosts.add(host)) {
-      _dirty = true;
+      _hostsDirty = true;
     }
     return Uri(
       scheme: 'content',
       host: authority,
       path: '/img',
-      queryParameters: {'u': _withoutToken(url, parsed)},
+      queryParameters: {'u': url},
     );
   }
 
-  String _withoutToken(String url, Uri? parsed) {
-    final q = url.indexOf('?');
-    if (parsed == null || q < 0) return url;
-    final kept = <String>[];
-    String? token;
-    for (final part in url.substring(q + 1).split('&')) {
-      if (_tokenParams.contains(part.split('=').first.toLowerCase())) {
-        token = part;
-      } else {
-        kept.add(part);
-      }
-    }
-    if (token == null) return url;
-    final origin = '${parsed.scheme}://${parsed.host}:${parsed.port}';
-    if (_tokens[origin] != token) {
-      _tokens[origin] = token;
-      _dirty = true;
-    }
-    final base = url.substring(0, q);
-    return kept.isEmpty ? base : '$base?${kept.join('&')}';
-  }
-
-  /// Writes the hosts and tokens seen so far to the preferences the provider
-  /// reads. Await this before returning media items so they're in place before
-  /// the car requests an icon.
+  /// Writes the hosts seen so far to the preferences the provider reads. Await
+  /// this before returning media items so the allowlist is in place before the
+  /// car requests an icon.
   Future<void> persistHosts() async {
-    if (!_dirty) return;
-    _dirty = false;
+    if (!_hostsDirty) return;
+    _hostsDirty = false;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_hostsKey, _hosts.join(','));
-      await prefs.setString(_tokensKey, jsonEncode(_tokens));
     } catch (_) {
-      _dirty = true;
+      _hostsDirty = true;
     }
   }
 }

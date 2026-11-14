@@ -1,5 +1,3 @@
-import 'package:server_core/server_core.dart';
-
 sealed class ServerAdditionState {
   const ServerAdditionState();
 }
@@ -30,9 +28,6 @@ class ServerUnableToConnect extends ServerAdditionState {
   /// of the certificate_required alert. Refused, timed out and unresolved
   /// addresses never count, so a later port can be the one picked.
   final String? possibleClientCertCandidate;
-  /// A Silo server whose API this build doesn't speak, because it's newer
-  /// (update Moonfin) or older (update Silo). Nothing else is tried after it.
-  final SiloApiUnsupported? unsupportedSilo;
 
   const ServerUnableToConnect({
     required this.candidatesTried,
@@ -43,7 +38,6 @@ class ServerUnableToConnect extends ServerAdditionState {
     this.untrustedCandidate,
     this.clientCertCandidate,
     this.possibleClientCertCandidate,
-    this.unsupportedSilo,
   });
 }
 

@@ -15,10 +15,8 @@ import '../../../data/offline/connectivity_aware_media_server_client.dart';
 import '../../../data/repositories/multi_server_repository.dart';
 import '../../../data/repositories/search_repository.dart';
 import '../../../data/repositories/seerr_repository.dart';
-import '../../../data/services/plugin_sync_service.dart';
 import '../../../data/services/recent_searches_store.dart';
 import '../../../data/services/remote_search_session.dart';
-import '../../../data/services/seerr/seerr_api_models.dart';
 import '../../../data/services/voice_search_controller.dart';
 import '../../../data/viewmodels/search_view_model.dart';
 import '../../../preference/preference_constants.dart';
@@ -51,16 +49,11 @@ class SearchScreen extends StatefulWidget {
   final String? scopedLibraryId;
   final RemoteSearchSession? remoteSearch;
 
-  /// Opened from the request screens: a search lands on the Requests tab
-  /// when it has request results.
-  final bool preferRequests;
-
   const SearchScreen({
     super.key,
     this.initialQuery,
     this.scopedLibraryId,
     this.remoteSearch,
-    this.preferRequests = false,
   });
 
   @override
@@ -97,8 +90,6 @@ class _SearchScreenState extends State<SearchScreen>
   static const _tmdbPosterBase = 'https://image.tmdb.org/t/p/w342';
   int _selectedTab = 0;
   String? _tabSelectionQuery;
-  // Whether the user picked a tab for the current query.
-  bool _tabPicked = false;
   // The tabs as of the last results, so the selection stays on its tab when a
   // group arrives late.
   List<String> _shownTabKeys = const [];
@@ -131,9 +122,6 @@ class _SearchScreenState extends State<SearchScreen>
               _userPreferences.get(UserPreferences.enableMultiServerLibraries) &&
               !shouldUseOfflineCatalog()
           ? getIt<MultiServerRepository>()
-          : null,
-      pluginSync: getIt.isRegistered<PluginSyncService>()
-          ? getIt<PluginSyncService>()
           : null,
     );
     _vm.addListener(_onViewModelChanged);
@@ -196,24 +184,18 @@ class _SearchScreenState extends State<SearchScreen>
     final keptTab = _selectedTab < _shownTabKeys.length
         ? tabKeys.indexOf(_shownTabKeys[_selectedTab])
         : -1;
-    final requestsArrived =
-        _hasSeerr && !_shownTabKeys.contains('seerr');
     _shownTabKeys = tabKeys;
     if (_tabCount > 0 && query != _tabSelectionQuery) {
       _tabSelectionQuery = query;
-      _tabPicked = false;
-      _selectedTab = _defaultTab;
-    } else if (widget.preferRequests && requestsArrived && !_tabPicked) {
-      // The request results came after the library's.
-      _selectedTab = _defaultTab;
+      _selectedTab = _leadingTabCount;
     } else if (keptTab >= 0) {
       _selectedTab = keptTab;
     } else if (_selectedTab >= _tabCount) {
-      _selectedTab = _tabCount == 0 ? 0 : _defaultTab;
+      _selectedTab = _tabCount == 0 ? 0 : _leadingTabCount;
     }
     if (_focusTabsAfterResults && _tabCount > 0) {
       _focusTabsAfterResults = false;
-      _selectedTab = _defaultTab;
+      _selectedTab = _leadingTabCount;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _tabsFocusNode.canRequestFocus) {
           _tabsFocusNode.requestFocus();
@@ -371,16 +353,8 @@ class _SearchScreenState extends State<SearchScreen>
       !GetIt.instance<UserPreferences>().get(UserPreferences.kidsModeEnabled);
   bool get _hasGames => _vm.gameResults.isNotEmpty;
 
-  List<SeerrDiscoverItem> get _smartSeerr =>
-      GetIt.instance<UserPreferences>().get(UserPreferences.kidsModeEnabled)
-      ? const []
-      : _vm.smartResults.seerr;
-  bool get _hasSmart =>
-      _vm.smartResults.items.isNotEmpty || _smartSeerr.isNotEmpty;
-
   int get _tabCount {
-    final hasContent =
-        _vm.results.isNotEmpty || _hasSeerr || _hasGames || _hasSmart;
+    final hasContent = _vm.results.isNotEmpty || _hasSeerr || _hasGames;
     return hasContent ? _leadingTabCount + 1 + _vm.results.length : 0;
   }
 
@@ -403,16 +377,11 @@ class _SearchScreenState extends State<SearchScreen>
 
   bool _tabIsAll(int index) => index == _leadingTabCount;
 
-  /// The tab a new search lands on: All, or Requests when asked for.
-  int get _defaultTab =>
-      widget.preferRequests && _hasSeerr ? 0 : _leadingTabCount;
-
   // The _vm.results index for a group tab, which follow the All tab.
   int _groupIndex(int tab) => tab - _leadingTabCount - 1;
 
   void _selectTab(int index) {
     if (index == _selectedTab) return;
-    _tabPicked = true;
     setState(() => _selectedTab = index);
     cleanupGridFocusNodes(_currentTabItemCount());
     _lastGridCount = -1;
@@ -697,24 +666,11 @@ class _SearchScreenState extends State<SearchScreen>
     return l10n.voiceSearchUnavailable;
   }
 
-  /// Starting voice search takes focus from everything and only a result gives
-  /// it back, so on TV a failed start or a recognizer error would leave the
-  /// D-pad with nothing focused. Hands it back to the mic button unless
-  /// something else took it or another screen covers this one.
-  void _restoreFocusAfterVoiceFailure() {
-    if (!mounted || !PlatformDetection.isTV) return;
-    if (ModalRoute.of(context)?.isCurrent == false) return;
-    final current = FocusManager.instance.primaryFocus;
-    if (current != null && current is! FocusScopeNode) return;
-    _voiceFocus.requestFocus();
-  }
-
   void _showVoiceSearchError(
     String message, {
     bool showSettingsAction = false,
   }) async {
     if (!mounted) return;
-    _restoreFocusAfterVoiceFailure();
 
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
@@ -874,7 +830,15 @@ class _SearchScreenState extends State<SearchScreen>
 
   String? _subtitle(AggregatedItem item) {
     if (item.type == 'Audio') return item.albumArtist ?? item.album;
-    return item.subtitle;
+    final source = item.rawData['SpeshSource'];
+    final number = item.rawData['ChannelNumber']?.toString();
+    final parts = [
+      if (number != null && number.isNotEmpty) '#$number',
+      if (source == 'local') 'Local',
+      if (source == 'vod') 'VOD',
+      if (item.subtitle != null && item.subtitle!.isNotEmpty) item.subtitle!,
+    ];
+    return parts.isEmpty ? null : parts.join(' / ');
   }
 
   Widget _buildVoiceActivation(Color idleColor) {
@@ -1096,6 +1060,36 @@ class _SearchScreenState extends State<SearchScreen>
                   ),
                 ),
               ),
+              if (widget.scopedLibraryId == null)
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: PlatformDetection.useMobileUi ? 20 : 48,
+                    vertical: 12,
+                  ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SegmentedButton<SearchSource>(
+                      segments: const [
+                        ButtonSegment(value: SearchSource.all, label: Text('All'), icon: Icon(Icons.search)),
+                        ButtonSegment(value: SearchSource.local, label: Text('Local'), icon: Icon(Icons.folder_outlined)),
+                        ButtonSegment(value: SearchSource.vod, label: Text('VOD'), icon: Icon(Icons.video_library_outlined)),
+                        ButtonSegment(value: SearchSource.live, label: Text('Live TV'), icon: Icon(Icons.live_tv)),
+                      ],
+                      selected: {_vm.source},
+                      onSelectionChanged: (value) => _vm.setSource(value.first),
+                    ),
+                  ),
+                ),
+              if (_vm.searching) const LinearProgressIndicator(minHeight: 2),
+              if (_vm.errorMessage.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Row(children: [
+                    Expanded(child: Text(_vm.errorMessage)),
+                    IconButton(tooltip: 'Retry search', icon: const Icon(Icons.refresh),
+                      onPressed: () => _vm.searchImmediate(_vm.query)),
+                  ]),
+                ),
               Expanded(child: _buildBody()),
             ],
           ),
@@ -1119,7 +1113,8 @@ class _SearchScreenState extends State<SearchScreen>
         }
         return _buildResults();
       case SearchState.ready
-          when _vm.results.isEmpty && _vm.seerrResults.isEmpty && !_hasSmart:
+          when _vm.results.isEmpty && _vm.seerrResults.isEmpty && _vm.gameResults.isEmpty:
+        if (_vm.searching) return const Center(child: CircularProgressIndicator());
         return Center(
           child: Text(
             AppLocalizations.of(context).noResultsForQuery(_vm.query),
@@ -1165,9 +1160,7 @@ class _SearchScreenState extends State<SearchScreen>
     final totalCount =
         _vm.results.fold<int>(0, (s, g) => s + g.items.length) +
         _vm.seerrResults.length +
-        _vm.gameResults.length +
-        _vm.smartResults.items.length +
-        _smartSeerr.length;
+        _vm.gameResults.length;
     final labels = <String>[
       if (_hasSeerr) '$seerrLabel: ${_vm.seerrResults.length}',
       if (_hasGames) '${l10n.games}: ${_vm.gameResults.length}',
@@ -1349,86 +1342,21 @@ class _SearchScreenState extends State<SearchScreen>
 
     final hasSeerr = _vm.seerrResults.isNotEmpty;
     final hasGames = _vm.gameResults.isNotEmpty;
-    final smartItems = _vm.smartResults.items;
-    final smartSeerr = _smartSeerr;
     _allRowIds = [
-      if (smartItems.isNotEmpty) 'smart',
-      if (smartSeerr.isNotEmpty) 'smart_seerr',
       for (final g in groups) g.itemTypes.first,
       if (hasSeerr) 'seerr',
       if (hasGames) 'games',
     ];
-    // Smart search rows come first, then the library groups, then the Seerr
-    // and Games rows when present.
+    // Library groups come first, then the Seerr and Games rows when present.
     final rowLens = <int>[
-      if (smartItems.isNotEmpty) smartItems.length,
-      if (smartSeerr.isNotEmpty) smartSeerr.length,
       for (final g in groups) g.items.length,
       if (hasSeerr) _vm.seerrResults.length,
       if (hasGames) _vm.gameResults.length,
     ];
 
     final rows = <Widget>[];
-    if (smartItems.isNotEmpty) {
-      final row = rows.length;
-      // Types are mixed here, so each card keeps its own shape and the row
-      // fits the tallest.
-      final ratios = [
-        for (final item in smartItems) MediaCard.aspectRatioForType(item.type),
-      ];
-      double widthFor(double ar) => ar == 2 / 3 ? 108.0 : 150.0;
-      rows.add(
-        LibraryRow(
-          key: _allRowKey(row),
-          title: l10n.smartSearch,
-          rowHeight: ratios
-              .map((ar) => widthFor(ar) / ar + 56)
-              .reduce((a, b) => a > b ? a : b),
-          children: [
-            for (var c = 0; c < smartItems.length; c++)
-              _resultItemCard(
-                item: smartItems[c],
-                width: widthFor(ratios[c]),
-                ar: ratios[c],
-                focusColor: focusColor,
-                cardFocusExpansion: cardFocusExpansion,
-                focusNode: _allCardNode(row, c),
-                onNavKey: (node, event) =>
-                    _onAllCardKey(row, c, rowLens, event),
-              ),
-          ],
-        ),
-      );
-    }
-    if (smartSeerr.isNotEmpty) {
-      final row = rows.length;
-      const cardWidth = 108.0;
-      rows.add(
-        LibraryRow(
-          key: _allRowKey(row),
-          title: l10n.smartSearchOnSeerr(
-            GetIt.instance<SeerrPreferences>().labelOrDefault(l10n.seerr),
-          ),
-          rowHeight: cardWidth / (2 / 3) + 56,
-          children: [
-            for (var c = 0; c < smartSeerr.length; c++)
-              _seerrResultCard(
-                item: smartSeerr[c],
-                width: cardWidth,
-                focusColor: focusColor,
-                cardFocusExpansion: cardFocusExpansion,
-                focusNode: _allCardNode(row, c),
-                onNavKey: (node, event) =>
-                    _onAllCardKey(row, c, rowLens, event),
-              ),
-          ],
-        ),
-      );
-    }
-    final groupRowOffset = rows.length;
-    for (var g = 0; g < groups.length; g++) {
-      final group = groups[g];
-      final r = groupRowOffset + g;
+    for (var r = 0; r < groups.length; r++) {
+      final group = groups[r];
       final ar = MediaCard.aspectRatioForType(group.items.first.type);
       final cardWidth = (ar == 2/3) ? 108.0 : 150.0;
       rows.add(
@@ -1440,7 +1368,7 @@ class _SearchScreenState extends State<SearchScreen>
             for (var c = 0; c < group.items.length; c++)
               _buildAllItemCard(
                 r,
-                g,
+                r,
                 c,
                 cardWidth,
                 ar,
@@ -1453,7 +1381,7 @@ class _SearchScreenState extends State<SearchScreen>
       );
     }
     if (hasSeerr) {
-      final seerrRow = rows.length;
+      final seerrRow = groups.length;
       final cardWidth = 108.0;
       final seerrLabel = GetIt.instance<SeerrPreferences>().labelOrDefault(
         l10n.seerr,
@@ -1478,7 +1406,7 @@ class _SearchScreenState extends State<SearchScreen>
       );
     }
     if (hasGames) {
-      final gamesRow = rows.length;
+      final gamesRow = groups.length + (hasSeerr ? 1 : 0);
       final cardWidth = 108.0;
       rows.add(
         LibraryRow(
@@ -1540,7 +1468,7 @@ class _SearchScreenState extends State<SearchScreen>
     bool cardFocusExpansion,
   ) {
     return _seerrResultCard(
-      item: _vm.seerrResults[col],
+      index: col,
       width: cardWidth,
       focusColor: focusColor,
       cardFocusExpansion: cardFocusExpansion,
@@ -1590,8 +1518,6 @@ class _SearchScreenState extends State<SearchScreen>
     // the line under the name instead.
     final serverOnSubtitle = serverName != null && item.type == 'Person';
     return MediaCard(
-      // A person has no file to read labels from.
-      posterBadgeItemId: item.type == 'Person' ? null : item.id,
       title: item.name,
       subtitle: serverOnSubtitle ? serverName : _subtitle(item),
       imageUrl: _imageUrl(item, maxWidth: requestWidth),
@@ -1654,13 +1580,14 @@ class _SearchScreenState extends State<SearchScreen>
 
   // Shared Seerr card body, used by both the grid and the All-tab rows.
   Widget _seerrResultCard({
-    required SeerrDiscoverItem item,
+    required int index,
     required double width,
     required Color focusColor,
     required bool cardFocusExpansion,
     required FocusNode? focusNode,
     required KeyEventResult Function(FocusNode, KeyEvent)? onNavKey,
   }) {
+    final item = _vm.seerrResults[index];
     final year = item.releaseDate ?? item.firstAirDate;
     final yearStr = (year != null && year.length >= 4)
         ? year.substring(0, 4)
@@ -1800,7 +1727,7 @@ class _SearchScreenState extends State<SearchScreen>
     bool cardFocusExpansion,
   ) {
     return _seerrResultCard(
-      item: _vm.seerrResults[index],
+      index: index,
       width: cellWidth,
       focusColor: focusColor,
       cardFocusExpansion: cardFocusExpansion,
@@ -1926,17 +1853,13 @@ class _ListeningPulseState extends State<_ListeningPulse>
       animation: _controller,
       builder: (_, _) {
         final t = _controller.value;
-        // Scaling at paint time keeps the mic's layout size fixed, so the
-        // ring doesn't push the search field around as it grows.
-        return Transform.scale(
-          scale: 1 + 0.6 * t,
-          child: Container(
-            width: widget.size,
-            height: widget.size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.red.withValues(alpha: 0.5 * (1 - t)),
-            ),
+        final size = widget.size * (1 + 0.6 * t);
+        return Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.red.withValues(alpha: 0.5 * (1 - t)),
           ),
         );
       },

@@ -11,21 +11,17 @@ import 'package:server_core/server_core.dart';
 import '../../../playback/subtitle_style.dart';
 import '../../../data/models/aggregated_item.dart';
 import '../../../data/models/live_tv_recording_state.dart';
-import '../../../data/repositories/item_mutation_repository.dart';
-import '../../../data/services/user_data_sync.dart';
 import '../../../data/viewmodels/live_tv_guide_view_model.dart';
 import '../../../playback/apple_player_ui.dart';
 import '../../../playback/native_apple_player_backend.dart';
 import '../../../playback/appletv_subtitles.dart';
 import '../../../playback/playback_info_sections.dart';
-import '../../../preference/preference_constants.dart';
 import '../../../preference/user_preferences.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../util/clock_format.dart';
 import '../../../util/platform_detection.dart';
 import '../livetv/channel_tune_observer.dart';
 import '../livetv/live_tv_guide_screen.dart';
-import '../../navigation/destinations.dart';
 import '../../screensaver/screensaver_controller.dart';
 import '../../theme/app_theme_controller.dart';
 import '../../widgets/live_tv/channel_carousel_overlay.dart';
@@ -62,9 +58,6 @@ class _AppleTvLiveTvPlayerHostScreenState
   StreamSubscription<bool>? _screensaverPlayingSub;
 
   (SubtitleStyle, double, double, int)? _lastSubtitleStyle;
-  late AppleTvClickpadSeekMode _clickpadSeekMode = _prefs.get(
-    UserPreferences.appleTvClickpadSeekMode,
-  );
 
   late int _currentIndex;
   bool _exiting = false;
@@ -111,13 +104,7 @@ class _AppleTvLiveTvPlayerHostScreenState
     }
   }
 
-  late List<GuideChannel> _syncedChannels;
-
-  void _syncChannels() => _syncedChannels = [
-    for (final channel in widget.channels) channel.withSyncedUserData(),
-  ];
-
-  GuideChannel get _currentChannel => _syncedChannels[_currentIndex];
+  GuideChannel get _currentChannel => widget.channels[_currentIndex];
 
   @override
   void initState() {
@@ -128,8 +115,6 @@ class _AppleTvLiveTvPlayerHostScreenState
     } catch (_) {}
     _screensaverController?.setNativePlayerPresented(true);
     _currentIndex = widget.startIndex;
-    _syncChannels();
-    userDataSync.addListener(_onChannelUserDataChanged);
     if (PlatformDetection.isIOS) {
       unawaited(_applyOrientationLock());
       // A phone only keeps its screen on while playback is marked active. The
@@ -222,14 +207,7 @@ class _AppleTvLiveTvPlayerHostScreenState
   }
 
   @override
-  void didUpdateWidget(covariant AppleTvLiveTvPlayerHostScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.channels, widget.channels)) _syncChannels();
-  }
-
-  @override
   void dispose() {
-    userDataSync.removeListener(_onChannelUserDataChanged);
     _exitSub?.cancel();
     _actionSub?.cancel();
     _bringupSub?.cancel();
@@ -257,10 +235,7 @@ class _AppleTvLiveTvPlayerHostScreenState
   void _onPrefsChanged() {
     final previous = _lastSubtitleStyle;
     _pushSubtitleStyle();
-    final mode = _prefs.get(UserPreferences.appleTvClickpadSeekMode);
-    final modeChanged = mode != _clickpadSeekMode;
-    _clickpadSeekMode = mode;
-    if (previous != _lastSubtitleStyle || modeChanged) _pushMetadata();
+    if (previous != _lastSubtitleStyle) _pushMetadata();
   }
 
   /// [force] pushes even when nothing changed, for a new stream or backend.
@@ -289,11 +264,6 @@ class _AppleTvLiveTvPlayerHostScreenState
         fontSize: style.fontSize,
         fontWeight: style.fontWeight,
         verticalOffset: style.verticalOffset,
-        strokeScale: style.strokeScale,
-        shadowColor: style.shadowColor,
-        shadowOffset: style.shadowOffset,
-        shadowBlur: style.shadowBlur,
-        fontFamily: style.fontFamily,
       );
     } catch (_) {}
   }
@@ -379,7 +349,7 @@ class _AppleTvLiveTvPlayerHostScreenState
 
   Future<void> _switchChannel(String channelId) async {
     if (_switching) return;
-    final index = _syncedChannels.indexWhere((c) => c.id == channelId);
+    final index = widget.channels.indexWhere((c) => c.id == channelId);
     if (index < 0 || index == _currentIndex) return;
     _switching = true;
     try {
@@ -499,14 +469,14 @@ class _AppleTvLiveTvPlayerHostScreenState
   );
 
   void _warmSchedule() {
-    if (_syncedChannels.isEmpty) return;
+    if (widget.channels.isEmpty) return;
     var prewarm = _carouselPrewarm;
     if (prewarm == null) {
       prewarm = ChannelCarouselPrewarm(_client);
       prewarm.viewModel.addListener(_onScheduleChanged);
       _carouselPrewarm = prewarm;
     }
-    prewarm.tuned(_syncedChannels, _currentChannel.id);
+    prewarm.tuned(widget.channels, _currentChannel.id);
   }
 
   /// The schedule notifies several times a second while artwork loads, and
@@ -526,7 +496,7 @@ class _AppleTvLiveTvPlayerHostScreenState
     final viewModel = _carouselPrewarm?.viewModel;
     if (viewModel == null) return;
     final currentId = _currentChannel.id;
-    for (final channel in _syncedChannels) {
+    for (final channel in widget.channels) {
       final program = viewModel.nowNextForChannel(channel.id).now;
       if (program != null) _nowPlayingByChannel[channel.id] = program;
       if (channel.id == currentId) _currentProgram = program;
@@ -562,7 +532,7 @@ class _AppleTvLiveTvPlayerHostScreenState
     final l10n = AppLocalizations.of(context);
     final now = DateTime.now();
     return [
-      for (final channel in _syncedChannels)
+      for (final channel in widget.channels)
         {
           'id': channel.id,
           'number': channel.number ?? '',
@@ -647,6 +617,7 @@ class _AppleTvLiveTvPlayerHostScreenState
           GuideFilter.kids => l10n.kids,
           GuideFilter.premiere => l10n.premiere,
           GuideFilter.favorites => l10n.favorites,
+          GuideFilter.recentlyWatched => 'Recently watched',
         },
     ];
   }
@@ -789,7 +760,6 @@ class _AppleTvLiveTvPlayerHostScreenState
       hasNext: false,
       skipForwardMs: _prefs.get(UserPreferences.skipForwardLength),
       skipBackMs: _prefs.get(UserPreferences.skipBackLength),
-      clickpadSeekMode: _clickpadSeekMode,
       audioTracks: _trackOptions(audioStreams, _manager.audioStreamIndex),
       subtitleTracks: [
         ..._trackOptions(
@@ -818,8 +788,6 @@ class _AppleTvLiveTvPlayerHostScreenState
       liveRecord: _liveRecordPayload(),
       orientationLocked: PlatformDetection.isIOS ? _orientationLocked : null,
       liveChannelNumber: channel.number ?? '',
-      canFavorite: true,
-      isFavorite: channel.isFavorite,
       channelList: _channelListPayload(),
       streamStats: _streamStatsPayload(),
       osdButtons: visibleOsdButtonIds(_prefs),
@@ -906,14 +874,8 @@ class _AppleTvLiveTvPlayerHostScreenState
       case 'openGuide':
         unawaited(_enterGuideMode());
         return;
-      case 'guideButton':
-        _onGuideButton();
-        return;
       case 'record':
         unawaited(_showRecordingDialog());
-        return;
-      case 'toggleFavorite':
-        unawaited(_toggleChannelFavorite());
         return;
       case 'messageAction':
         unawaited(_retryCurrentChannel());
@@ -955,68 +917,6 @@ class _AppleTvLiveTvPlayerHostScreenState
         }
     }
     Future<void>.delayed(const Duration(milliseconds: 300), _pushMetadata);
-  }
-
-  void _onChannelUserDataChanged() {
-    if (!mounted) return;
-    final updated = GuideChannel.withSyncedUserDataAll(_syncedChannels);
-    if (updated == null) return;
-    // The native carousel and channel buttons follow this order, so it sorts
-    // the way the guide and the Flutter carousel do.
-    if (_carouselPrewarm?.viewModel.sortBy == ChannelSortBy.favoritesFirst) {
-      final currentId = _currentChannel.id;
-      updated.sort(
-        LiveTvGuideViewModel.comparatorFor(ChannelSortBy.favoritesFirst),
-      );
-      _currentIndex = updated.indexWhere((c) => c.id == currentId);
-    }
-    _syncedChannels = updated;
-    _pushMetadata();
-  }
-
-  /// setFavorite flips the synced flag at once, and the user data listener
-  /// pushes the new heart. A failed request flips it back the same way.
-  Future<void> _toggleChannelFavorite() async {
-    final channel = _currentChannel;
-    try {
-      await ItemMutationRepository(
-        _client,
-      ).setFavorite(channel.id, isFavorite: !channel.isFavorite);
-    } catch (_) {
-      final backend = _backend;
-      if (!mounted || backend == null) return;
-      final l10n = AppLocalizations.of(context);
-      unawaited(
-        backend.showMessage(
-          l10n.failedToUpdateFavoriteChannel,
-          closeLabel: l10n.close,
-        ),
-      );
-    }
-  }
-
-  /// The remote's Guide button closes the player's own guide, or else leaves
-  /// the player for the full guide.
-  void _onGuideButton() {
-    if (!mounted || _exiting || _recordingFlow || _switching) return;
-    final navigator = Navigator.of(context);
-    if (_inGuide) {
-      final hostRoute = ModalRoute.of(context);
-      navigator.popUntil((route) => route == hostRoute);
-      return;
-    }
-    _exiting = true;
-    unawaited(_backend?.dismissPlayer() ?? Future<void>.value());
-    final router = GoRouter.of(context);
-    final matches = router.routerDelegate.currentConfiguration.matches;
-    final below = matches.length < 2
-        ? null
-        : matches[matches.length - 2].matchedLocation;
-    navigator.pop();
-    // A player opened from the guide is already back there once it closes.
-    if (below != Destinations.liveTvGuide) {
-      unawaited(router.push(Destinations.liveTvGuide));
-    }
   }
 
   void _handleExit() {

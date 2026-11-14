@@ -43,6 +43,7 @@ import '../detail/item_detail_screen.dart';
 import '../detail/playlist_sort_filter_bar.dart';
 import 'library_header_styles.dart';
 import '../../widgets/local_search_field.dart';
+import '../../widgets/spesh_empty_results.dart';
 import '../../widgets/skeleton/skeleton_library_grid.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../util/error_message.dart';
@@ -149,10 +150,6 @@ class LibraryBrowseScreen extends StatefulWidget {
   final List<String>? includeItemTypes;
   final bool favoritesOnly;
 
-  /// Set by the settings live preview, which draws the library in this style
-  /// with its first card held in focus and leaves the app's backdrop alone.
-  final LibraryStyle? previewStyle;
-
   const LibraryBrowseScreen({
     super.key,
     required this.libraryId,
@@ -162,7 +159,6 @@ class LibraryBrowseScreen extends StatefulWidget {
     this.studioName,
     this.includeItemTypes,
     this.favoritesOnly = false,
-    this.previewStyle,
   });
 
   @override
@@ -205,12 +201,10 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
     _vm.addListener(_onChanged);
     _vm.load();
     _scrollController.addListener(_onScroll);
-    if (widget.previewStyle == null) {
-      _backgroundSub = _backgroundService.backgroundStream.listen((url) {
-        if (mounted) setState(() => _backdropUrl = url);
-      });
-      _backdropUrl = _backgroundService.currentUrl;
-    }
+    _backgroundSub = _backgroundService.backgroundStream.listen((url) {
+      if (mounted) setState(() => _backdropUrl = url);
+    });
+    _backdropUrl = _backgroundService.currentUrl;
     _prefs.addListener(_onChanged);
     InlineBackInterceptor.push(_backToAlphabet);
   }
@@ -294,13 +288,6 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
 
   void _onChanged() {
     _hasSubtitlesCache = null;
-    if (widget.previewStyle != null &&
-        _vm.focusedItem == null &&
-        _vm.currentCategoryItems.isNotEmpty) {
-      final first = _vm.currentCategoryItems.first;
-      _backdropUrl = _backgroundService.backdropUrlsFor(first).firstOrNull;
-      _vm.setFocusedItem(first);
-    }
     if (mounted) setState(() {});
     _maybeBumpGridVersion();
   }
@@ -336,7 +323,8 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
     final pos = _scrollController.position;
     // extentAfter reads both of these, and throws before they are set.
     if (!pos.hasPixels || !pos.hasContentDimensions) return false;
-    return pos.extentAfter < _kLoadMoreExtent;
+    return pos.extentAfter < (_kLoadMoreExtent > pos.viewportDimension
+        ? _kLoadMoreExtent : pos.viewportDimension);
   }
 
   void _onScroll() {
@@ -524,6 +512,10 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
 
   void _onItemFocused(AggregatedItem item) {
     _vm.setFocusedItem(item);
+    final index = _vm.items.indexWhere((entry) => entry.id == item.id);
+    if (index >= 0 && index >= _vm.items.length - 12) {
+      unawaited(_vm.loadMore());
+    }
     // Debounced because holding the D-pad walks the grid a cell at a time and
     // each backdrop is a fullscreen fetch, decode and blur. Only the item the
     // user settles on is worth loading one for.
@@ -943,8 +935,7 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
     );
   }
 
-  LibraryStyle get _libraryStyle =>
-      widget.previewStyle ?? _prefs.get(UserPreferences.libraryStyle);
+  LibraryStyle get _libraryStyle => _prefs.get(UserPreferences.libraryStyle);
 
   bool get _usesDockedPanel =>
       _libraryStyle == LibraryStyle.docked && !_isCompact(context);
@@ -1260,14 +1251,75 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
                 ),
               ),
             ),
-          content,
-          if (showDockedBar)
-            Positioned(
-              left: kDockedBarMargin + padding.left,
-              right: kDockedBarMargin + padding.right,
-              bottom: kDockedBarMargin + padding.bottom,
-              child: DockedLibraryBar(model: model),
-            ),
+          Column(
+            children: [
+              _LibraryHeader(
+                libraryName: () {
+                  if (_vm.favoritesOnly) {
+                    return AppLocalizations.of(context).favorites;
+                  }
+                  if (_vm.includeItemTypes != null &&
+                      _vm.includeItemTypes!.isNotEmpty) {
+                    final type = _vm.includeItemTypes!.first;
+                    if (type == 'MusicAlbum') {
+                      return AppLocalizations.of(context).albums;
+                    } else if (type == 'AlbumArtist') {
+                      return AppLocalizations.of(context).albumArtists;
+                    } else if (type == 'MusicArtist') {
+                      return AppLocalizations.of(context).artists;
+                    } else if (type == 'Audio') {
+                      return AppLocalizations.of(context).songs;
+                    }
+                  }
+                  return _vm.libraryName;
+                }(),
+                totalCount: _vm.totalCount,
+                focusedItem: _vm.focusedItem,
+                focusedRatings: _vm.focusedRatings,
+                enableAdditionalRatings: _prefs.get(
+                  UserPreferences.enableAdditionalRatings,
+                ),
+                enabledRatings: _prefs.get(UserPreferences.enabledRatings),
+                showLabels: _prefs.get(UserPreferences.showRatingLabels),
+                showBadges: _prefs.get(UserPreferences.showRatingBadges),
+                showMediaDetails: _prefs.get(
+                  UserPreferences.showMediaDetailsOnLibraryPage,
+                ),
+                alphabetApplies: _alphabetApplies,
+                letterFilter: _vm.letterFilter,
+                allLetterFocusNode: _allLetterFocusNode,
+                homeFocusNode: _homeButtonFocusNode,
+                onTvSearchKey: _onTvSearchKey,
+                isMusicBrowse: _vm.isMusicBrowse,
+                searchController: _searchController,
+                searchFocusNode: _searchFocusNode,
+                onSearchChanged: (query) => _vm.setSearchQuery(query),
+                onBack: () => PlatformDetection.isWeb
+                    ? context.popOrHome()
+                    : context.pop(),
+                onSort: () => _showFilterSortDialog(context),
+                onGroupBy: () => _showGroupByDialog(),
+                canGroup: _vm.isMovieOrSeriesLibrary,
+                onSettings: () => _showSettingsDialog(context),
+                onShuffle: _isSongsBrowse ? () => _shuffleSongsLibrary() : null,
+                onLetterChanged: (l) => _jumpToLetter(l),
+              ),
+              if (const bool.fromEnvironment('SPESHTV_WEB') && _vm.hasActiveFilters)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(children: [
+                    Expanded(child: Text('${_vm.activeFilterCount} active filters',
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    IconButton(
+                      tooltip: AppLocalizations.of(context).clearFilters,
+                      onPressed: () => _vm.clearFilters(),
+                      icon: const Icon(Icons.filter_alt_off),
+                    ),
+                  ]),
+                ),
+              Expanded(child: _buildBody()),
+            ],
+          ),
         ],
       ),
     );
@@ -1458,12 +1510,7 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
 
   Widget _buildSongsList() {
     if (_vm.items.isEmpty) {
-      return Center(
-        child: Text(
-          AppLocalizations.of(context).noItemsFound,
-          style: const TextStyle(color: Colors.white70),
-        ),
-      );
+      return _emptyLibraryResults();
     }
     final isMobile = _isCompact(context);
     final hPad = isMobile ? 16.0 : _horizontalPadding;
@@ -1502,18 +1549,27 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
 
   Widget _buildGrid() {
     if (_vm.items.isEmpty) {
-      return Center(
-        child: Text(
-          AppLocalizations.of(context).noItemsFound,
-          style: const TextStyle(color: Colors.white70),
-        ),
-      );
+      return _emptyLibraryResults();
     }
 
     if (_vm.scrollDirection == LibraryScrollDirection.horizontal) {
       return _buildHorizontalGrid();
     }
     return _buildVerticalGrid();
+  }
+
+  Widget _emptyLibraryResults() {
+    final l10n = AppLocalizations.of(context);
+    if (!const bool.fromEnvironment('SPESHTV_WEB')) {
+      return Center(child: Text(l10n.noItemsFound, style: const TextStyle(color: Colors.white70)));
+    }
+    return SpeshEmptyResults(title: l10n.noItemsFound, clearFiltersLabel: l10n.clearFilters,
+      onClearFilters: _vm.hasActiveFilters ? () => _vm.clearFilters() : null,
+      onClearSearch: _vm.searchQuery.trim().isNotEmpty ? () {
+        _searchController.clear();
+        _vm.setSearchQuery('');
+      } : null,
+    );
   }
 
   Widget _buildVerticalGrid() {
@@ -1828,7 +1884,6 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
     Widget card(BuildContext? revealContext) {
       return MediaCard(
         animeMarkerItemId: item.id,
-        posterBadgeItemId: item.id,
         recordingItemId: item.id,
         title: item.name,
         subtitle: _cardSubtitle(item),
@@ -2104,7 +2159,6 @@ class _LibraryBrowseScreenState extends State<LibraryBrowseScreen>
                       if (index >= items.length) return null;
                       final item = items[index];
                       return MediaCard(
-                        posterBadgeItemId: item.id,
                         recordingItemId: item.id,
                         title: item.name,
                         subtitle: _cardSubtitle(item),

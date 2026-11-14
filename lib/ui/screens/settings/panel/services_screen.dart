@@ -47,10 +47,7 @@ class _ServicesScreenState extends State<_ServicesScreen> {
           // The plugin probe lands after sign in, so the list waits on it
           // rather than reading the flag once and never hearing the answer.
           child: ListenableBuilder(
-            listenable: Listenable.merge([
-              achievementsService,
-              GetIt.instance<PluginSyncService>(),
-            ]),
+            listenable: achievementsService,
             builder: (context, _) => _buildList(l10n, achievementsService),
           ),
         ),
@@ -62,40 +59,32 @@ class _ServicesScreenState extends State<_ServicesScreen> {
     final seerrLabel = GetIt.instance<SeerrPreferences>().labelOrDefault(
       l10n.seerr,
     );
-    final seerrShown = seerrOnAnySignedInServer();
-    final calendarShown = GetIt.instance<PluginSyncService>().calendarAvailable;
     return ListView(
       children: [
         adaptiveListSection(
           children: [
-            // Seerr goes through the Moonfin plugin. Not offered when no
-            // signed-in server could have it (all Silo, say).
-            if (seerrShown)
+            if (PlatformDetection.isWindows &&
+                const bool.fromEnvironment('SPESHTV_ANNOUNCEMENTS', defaultValue: true))
               _TvSettingsListTile(
-                autofocus: true,
-                leading: Image.asset(
-                  'assets/icons/seerr.png',
-                  width: 24,
-                  height: 24,
-                ),
-                title: Text(seerrLabel),
-                subtitle: Text(l10n.mediaRequestIntegration),
-                onTap: () =>
-                    context.pushSettingsScreen(const SeerrConfigScreen()),
+                leading: const Icon(Icons.campaign_outlined),
+                title: const Text('Discord announcements'),
+                subtitle: const Text('Announce movies and episodes using a Discord webhook'),
+                onTap: () => context.pushSettingsScreen(const DiscordAnnouncementsScreen()),
               ),
-            if (calendarShown)
-              _TvSettingsListTile(
-                autofocus: !seerrShown,
-                leading: const Icon(Icons.calendar_month),
-                title: Text(l10n.calendar),
-                subtitle: Text(l10n.calendarSettingsSubtitle),
-                onTap: () => context.pushSettingsScreen(
-                  const _CalendarSettingsScreen(),
-                ),
+            _TvSettingsListTile(
+              autofocus: true,
+              leading: Image.asset(
+                'assets/icons/seerr.png',
+                width: 24,
+                height: 24,
               ),
+              title: Text(seerrLabel),
+              subtitle: Text(l10n.mediaRequestIntegration),
+              onTap: () =>
+                  context.pushSettingsScreen(const SeerrConfigScreen()),
+            ),
             if (achievements.available)
               _TvSettingsListTile(
-                autofocus: !seerrShown && !calendarShown,
                 leading: const Icon(
                   Icons.military_tech,
                   color: Color(0xFFFFC107),

@@ -19,10 +19,11 @@ class HomeRowCacheStore {
 
   static const _maxAge = Duration(days: 3);
 
-  /// Rows whose items are only true for the minutes they describe. Replaying
-  /// them from disk paints programs that already ended.
+  /// Mutable progress uses its own short-lived snapshot, not the catalog cache.
   static bool isTimeBound(HomeRowType rowType) =>
-      rowType == HomeRowType.liveTvOnNow;
+      rowType == HomeRowType.liveTvOnNow ||
+      rowType == HomeRowType.resume ||
+      rowType == HomeRowType.nextUp;
 
   Future<File> _file() async {
     final dir = PlatformDetection.isAppleTV

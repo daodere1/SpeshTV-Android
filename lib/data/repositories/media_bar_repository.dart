@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:get_it/get_it.dart';
 import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:server_core/server_core.dart';
@@ -14,19 +15,30 @@ import '../../preference/user_preferences.dart';
 import '../../util/tmdb_thumb.dart';
 import '../models/media_bar_slide_item.dart';
 import '../models/media_bar_state.dart';
+import '../services/spotlight_cache_store.dart';
+import '../utils/progressive_batches.dart';
 import '../services/custom_external_lists_service.dart';
 import '../services/library_scope_service.dart';
 import '../services/plugin_sync_service.dart';
 import '../utils/blocked_ratings.dart';
 import '../utils/bounded_concurrency.dart';
-import '../utils/latest_media_row_normalizer.dart';
 import 'tmdb_repository.dart';
+import 'user_views_repository.dart';
 
 class MediaBarRepository {
+  void precacheImages(BuildContext context, List<MediaBarSlideItem> items) {
+    for (final item in items.take(2)) {
+      for (final url in [item.backdropUrl, item.logoUrl]) {
+        if (url != null)
+          unawaited(precacheImage(CachedNetworkImageProvider(url), context));
+      }
+    }
+  }
 
   final MediaServerClient _client;
   final UserPreferences _prefs;
   final _random = math.Random();
+  final _spotlightCache = SpotlightCacheStore();
 
   static const _fields =
       'Type,Genres,OfficialRating,CommunityRating,CriticRating,'
@@ -35,7 +47,9 @@ class MediaBarRepository {
 
   MediaBarRepository(this._client, this._prefs);
 
-  Future<MediaBarState> loadItems() async {
+  Future<MediaBarState> loadItems({
+    void Function(MediaBarReady)? onCached,
+  }) async {
     if (!GetIt.instance.isRegistered<MediaBarRepository>() ||
         GetIt.instance<MediaBarRepository>() != this) {
       return const MediaBarDisabled();
@@ -54,9 +68,43 @@ class MediaBarRepository {
     // plain item queries, so a plugin is not needed to honour the choice.
     final libraryIds = _splitCsv(UserPreferences.mediaBarLibraryIds);
     final collectionIds = _splitCsv(UserPreferences.mediaBarCollectionIds);
-    final excludedGenres = _splitCsv(
-      UserPreferences.mediaBarExcludedGenres,
-    ).toSet();
+    final excludedGenres = _splitCsv(UserPreferences.mediaBarExcludedGenres)
+        .toSet();
+
+    final cacheKey =
+        (const bool.fromEnvironment('SPESHTV_WEB') ||
+                const bool.fromEnvironment('SPESHMEDIA_CLIENT', defaultValue: true)) &&
+            (_client.userId?.isNotEmpty ?? false)
+        ? jsonEncode([
+            _client.baseUrl,
+            _client.userId,
+            mediaBarMode,
+            contentType,
+            maxItems,
+            _prefs.get(UserPreferences.mediaBarSourceType),
+            [...libraryIds]..sort(),
+            [...collectionIds]..sort(),
+            [...excludedGenres]..sort(),
+          ])
+        : null;
+    if (cacheKey != null && onCached != null) {
+      final cached = await _spotlightCache.read(cacheKey);
+      if (cached != null) {
+        try {
+          final allowed = _selectItemsWithBackdrops(
+            cached,
+            maxItems,
+            excludedGenres,
+          );
+          if (allowed.isNotEmpty) {
+            onCached(MediaBarReady(allowed.map(_toSlideItem).toList()));
+          }
+        } catch (_) {
+          // Invalid or outdated cached metadata must not block fresh results.
+        }
+      }
+    }
+    var earlySpotlightPublished = false;
 
     final fetchLimit = maxItems + 2;
 
@@ -92,13 +140,42 @@ class MediaBarRepository {
 
     final allParentIds = <String>{};
     final allParentItemTypes = <String, List<String>>{};
+    var librariesResolved = false;
 
     try {
-      final viewsResponse = await _client.userViewsApi.getUserViews().timeout(
-        const Duration(seconds: 4),
-      );
+      final viewsRequest = GetIt.instance.isRegistered<UserViewsRepository>()
+          ? GetIt.instance<UserViewsRepository>().getVisibleViewsResponse()
+          : _client.userViewsApi.getUserViews();
+      Map<String, dynamic> viewsResponse;
+      try {
+        viewsResponse = await viewsRequest.timeout(const Duration(seconds: 4));
+      } catch (_) {
+        // The views endpoint can stall while building virtual/grouped views.
+        // Root folders avoid that work and remain scoped to the signed-in user.
+        final folders = await _client.itemsApi.getItems(
+          includeItemTypes: const ['CollectionFolder'],
+          recursive: false,
+          fields: 'CollectionType',
+          limit: 100,
+          enableTotalRecordCount: false,
+        ).timeout(const Duration(seconds: 8));
+        if ((folders['Items'] as List? ?? []).isEmpty) {
+          // Some Jellyfin roots expose virtual views only. Do not turn a
+          // slow successful views response into an empty/disabled Spotlight.
+          viewsResponse = await viewsRequest.timeout(const Duration(seconds: 20));
+        } else {
+        final hidden = GetIt.instance.isRegistered<UserViewsRepository>()
+            ? await GetIt.instance<UserViewsRepository>().getMyMediaExcludes()
+                .timeout(const Duration(seconds: 4))
+            : const <String>{};
+        viewsResponse = {'Items': (folders['Items'] as List? ?? [])
+            .where((item) => item is Map && !hidden.contains(item['Id']?.toString()))
+            .toList()};
+        }
+      }
       final views = (viewsResponse['Items'] as List? ?? [])
           .cast<Map<String, dynamic>>();
+      librariesResolved = true;
 
       final validLibraryIds = <String>{};
       for (final view in views) {
@@ -134,51 +211,81 @@ class MediaBarRepository {
       // The views lookup failed, so fall back to what the user picked. Those
       // saved ids can name a library access has since been revoked for, so
       // drop what the policy no longer allows before trusting them.
-      allParentIds.addAll(
-        await GetIt.instance<LibraryScopeService>().retainPermitted(libraryIds),
-      );
+      if (libraryIds.isNotEmpty) {
+        try {
+          allParentIds.addAll(await GetIt.instance<LibraryScopeService>()
+              .retainPermitted(libraryIds).timeout(const Duration(seconds: 4)));
+        } catch (_) {
+          // A failed scope lookup is not proof that Spotlight was disabled.
+        }
+      }
       allParentIds.addAll(collectionIds);
+    }
+
+    final allItems = <Map<String, dynamic>>[];
+    final catalogClock = Stopwatch()..start();
+    Future<List<Map<String, dynamic>>> withinCatalogBudget(
+      Future<List<Map<String, dynamic>>> Function() fetch,
+    ) async {
+      final remaining = const Duration(seconds: 10) - catalogClock.elapsed;
+      if (remaining <= Duration.zero) return const [];
+      try {
+        return await fetch().timeout(remaining);
+      } catch (_) {
+        return const [];
+      }
     }
 
     try {
       if (allParentIds.isEmpty) {
+        if (!librariesResolved) {
+          return const MediaBarError('Spotlight library lookup unavailable');
+        }
         return const MediaBarDisabled();
-      }
-
-      final allItems = <Map<String, dynamic>>[];
-      final seenIds = <String>{};
-      final usable = _usableFor(excludedGenres);
-      var usableCount = 0;
-      // A source still waiting for a slot is skipped once the pool holds twice
-      // the item count to choose from. The order is shuffled so the skipped
-      // ones change from one load to the next.
-      final enough = maxItems * 2;
-      await mapBounded(
-        allParentIds.toList()..shuffle(_random),
-        _sourceConcurrency,
-        (parentId) async {
-          if (usableCount >= enough) return null;
-          try {
-            final batch = await _fetchItems(
-              allParentItemTypes[parentId] ?? includeTypes,
-              fetchLimit,
-              parentId: parentId,
+      } else {
+        final collectedIds = <String>{};
+        final collected =
+            await collectProgressiveBatches<String, Map<String, dynamic>>(
+              allParentIds.toList(),
+              (parentId) async {
+                if (collectedIds.length >= maxItems) return const [];
+                if (!GetIt.instance.isRegistered<MediaBarRepository>() ||
+                    GetIt.instance<MediaBarRepository>() != this) {
+                  return const <Map<String, dynamic>>[];
+                }
+                try {
+                  final targetTypes =
+                      allParentItemTypes[parentId] ?? includeTypes;
+                  final batch = await _fetchItems(
+                    targetTypes,
+                    fetchLimit,
+                    parentId: parentId,
+                  ).timeout(const Duration(seconds: 8));
+                  return batch;
+                } catch (_) {
+                  // Keep fetching remaining libraries if one fails
+                  return const <Map<String, dynamic>>[];
+                }
+              },
+              concurrency: 6,
+              onBatch: (batch) {
+                collectedIds.addAll(batch.where(_usableFor(excludedGenres))
+                    .map((item) => item['Id']?.toString() ?? '')
+                    .where((id) => id.isNotEmpty));
+                if (!earlySpotlightPublished && onCached != null) {
+                  final preview = _selectItemsWithBackdrops(
+                    batch,
+                    maxItems,
+                    excludedGenres,
+                  );
+                  if (preview.isNotEmpty) {
+                    earlySpotlightPublished = true;
+                    onCached(MediaBarReady(preview.map(_toSlideItem).toList()));
+                  }
+                }
+              },
             );
-            for (final item in batch) {
-              final id = item['Id']?.toString();
-              if (id != null && !seenIds.add(id)) continue;
-              allItems.add(item);
-              if (usable(item)) usableCount++;
-            }
-          } catch (_) {
-            // Keep fetching remaining libraries if one fails
-          }
-          return null;
-        },
-      );
-      if (!GetIt.instance.isRegistered<MediaBarRepository>() ||
-          GetIt.instance<MediaBarRepository>() != this) {
-        return const MediaBarDisabled();
+        allItems.addAll(collected);
       }
 
       var selected = _selectItemsWithBackdrops(
@@ -188,32 +295,34 @@ class MediaBarRepository {
       );
 
       if (selected.isEmpty && allParentIds.isNotEmpty) {
-        // Asking again for new releases would find nothing again, so a quiet
-        // window shows random titles from the first library that has some.
-        final newReleases = _isNewReleaseSource;
-        final retryParents = newReleases ? allParentIds : [allParentIds.first];
-        for (final parentId in retryParents) {
-          selected = _selectItemsWithBackdrops(
-            await _fetchItems(
-              allParentItemTypes[parentId] ?? includeTypes,
+        final fallbackItems = <Map<String, dynamic>>[];
+        final targetTypes =
+            allParentItemTypes[allParentIds.first] ?? includeTypes;
+        fallbackItems.addAll(
+          await withinCatalogBudget(
+            () => _fetchItems(
+              targetTypes,
               fetchLimit,
-              parentId: parentId,
-              random: newReleases,
+              parentId: allParentIds.first,
             ),
-            maxItems,
-            excludedGenres,
-          );
-          if (selected.isNotEmpty) break;
-        }
+          ),
+        );
+
+        selected = _selectItemsWithBackdrops(
+          fallbackItems,
+          maxItems,
+          excludedGenres,
+        );
       }
 
       if (selected.isEmpty) {
-        final firstLibraryItems =
-            await _fetchItemsFromFirstSeriesOrMoviesLibrary(
-              includeTypes,
-              fetchLimit,
-              contentType: contentType,
-            );
+        final firstLibraryItems = await withinCatalogBudget(
+          () => _fetchItemsFromFirstSeriesOrMoviesLibrary(
+            includeTypes,
+            fetchLimit,
+            contentType: contentType,
+          ),
+        );
         selected = _selectItemsWithBackdrops(
           firstLibraryItems,
           maxItems,
@@ -230,12 +339,18 @@ class MediaBarRepository {
       if (items.isEmpty) {
         return const MediaBarError('No items with backdrop images found');
       }
+
+      if (cacheKey != null) {
+        unawaited(_spotlightCache.write(cacheKey, selected));
+      }
       return MediaBarReady(items);
     } catch (e) {
-      final firstLibraryItems = await _fetchItemsFromFirstSeriesOrMoviesLibrary(
-        includeTypes,
-        fetchLimit,
-        contentType: contentType,
+      final firstLibraryItems = await withinCatalogBudget(
+        () => _fetchItemsFromFirstSeriesOrMoviesLibrary(
+          includeTypes,
+          fetchLimit,
+          contentType: contentType,
+        ),
       );
       final selected = _selectItemsWithBackdrops(
         firstLibraryItems,
@@ -243,7 +358,11 @@ class MediaBarRepository {
         excludedGenres,
       );
       if (selected.isNotEmpty) {
-        return MediaBarReady(selected.map(_toSlideItem).toList());
+        final items = selected.map(_toSlideItem).toList();
+        if (cacheKey != null) {
+          unawaited(_spotlightCache.write(cacheKey, selected));
+        }
+        return MediaBarReady(items);
       }
       return MediaBarError(e);
     }
@@ -254,7 +373,10 @@ class MediaBarRepository {
     int maxItems,
     Set<String> excludedGenres,
   ) {
-    final withBackdrops = source.where(_usableFor(excludedGenres)).toList()
+    final seen = <String>{};
+    final withBackdrops = source.where(_usableFor(excludedGenres))
+        .where((item) => seen.add(item['Id']?.toString() ?? ''))
+        .toList()
       ..shuffle();
     return withBackdrops.take(maxItems).toList();
   }
@@ -331,12 +453,7 @@ class MediaBarRepository {
         return const <Map<String, dynamic>>[];
       }
 
-      return await _fetchItems(
-        itemTypes,
-        limit,
-        parentId: libraryId,
-        random: _isNewReleaseSource,
-      );
+      return await _fetchItems(itemTypes, limit, parentId: libraryId);
     } catch (_) {
       return const <Map<String, dynamic>>[];
     }
@@ -346,58 +463,79 @@ class MediaBarRepository {
     return value?.toString().trim().toLowerCase() ?? '';
   }
 
-  /// How many titles each source hands the selector. The random source asks
-  /// the server for this many in a random order, and the dated ones read this
-  /// many of the newest.
+  /// How many titles each source hands the selector. The random source reads
+  /// this many from a random place in the library, and the dated ones read
+  /// this many of the newest.
   static const _poolSize = 40;
 
   /// How many libraries and collections are read at once.
   static const _sourceConcurrency = 6;
 
-  /// [random] skips the chosen source and reads a random window.
   Future<List<Map<String, dynamic>>> _fetchItems(
     List<String>? itemTypes,
     int limit, {
     String? parentId,
-    bool random = false,
   }) async {
     if (!GetIt.instance.isRegistered<MediaBarRepository>() ||
         GetIt.instance<MediaBarRepository>() != this) {
       return const <Map<String, dynamic>>[];
     }
-    final sourceType = random
-        ? UserPreferences.mediaBarSourceRandom
-        : _prefs.get(UserPreferences.mediaBarSourceType);
-    if (sourceType == UserPreferences.mediaBarSourceNewReleases) {
-      return _fetchNewReleaseSeries(itemTypes, limit, parentId: parentId);
-    }
+    final sourceType = _prefs.get(UserPreferences.mediaBarSourceType);
     if (sourceType == UserPreferences.mediaBarSourceRecentlyAdded ||
         sourceType == UserPreferences.mediaBarSourceRecentlyReleased) {
       return _fetchDatedItems(sourceType, itemTypes, limit, parentId: parentId);
     }
     try {
-      final response = await _client.itemsApi
+      // Get the total count for this parent so we can pick a random window.
+      // Asking for a single item keeps it cheap.
+      final countResponse = await _client.itemsApi
           .getItems(
             includeItemTypes: itemTypes,
-            sortBy: 'Random',
+            sortBy: 'SortName',
             sortOrder: 'Ascending',
             // A library the user has grouped with others holds those libraries
             // rather than the titles, so only a recursive walk reaches anything.
             // The type filter keeps the walk to movies and series either way.
             recursive: true,
             parentId: parentId,
-            limit: _poolSize,
+            limit: 1,
+            enableTotalRecordCount: true,
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final total = countResponse['TotalRecordCount'] as int? ?? 0;
+
+      if (total <= 0) {
+        return const <Map<String, dynamic>>[];
+      }
+
+      // Fetch a random window with the fields and backdrop tags the selector
+      // needs. A small library takes its whole set starting from the first item.
+      final windowSize = math.min(total, _poolSize);
+      final maxStartIndex = total - windowSize;
+      final startIndex = maxStartIndex > 0
+          ? _random.nextInt(maxStartIndex + 1)
+          : 0;
+
+      final windowResponse = await _client.itemsApi
+          .getItems(
+            includeItemTypes: itemTypes,
+            sortBy: 'SortName',
+            sortOrder: 'Ascending',
+            recursive: true,
+            parentId: parentId,
+            startIndex: startIndex,
+            limit: windowSize,
             fields: _fields,
             enableTotalRecordCount: false,
             enableImageTypes: 'Backdrop,Logo,Banner',
           )
           .timeout(const Duration(seconds: 15));
 
-      final rawItems = (response['Items'] as List? ?? [])
-          .cast<Map<String, dynamic>>()
-          .toList();
-      // A server that ignores Random hands back its own order, so the pool is
-      // shuffled again before the selector takes its slides.
+      final windowItems = windowResponse['Items'] as List? ?? [];
+      final rawItems = windowItems.cast<Map<String, dynamic>>().toList();
+
+      // Shuffle locally to provide a fresh random feel on every launch
       rawItems.shuffle(_random);
       return rawItems;
     } on TimeoutException {
@@ -433,11 +571,6 @@ class MediaBarRepository {
     String? parentId,
   }) async {
     try {
-      final hideWatched = _prefs.containsPreference(
-            UserPreferences.hideWatchedInRecentRows,
-          )
-          ? _prefs.get(UserPreferences.hideWatchedInRecentRows)
-          : null;
       final response =
           sourceType == UserPreferences.mediaBarSourceRecentlyReleased
           ? await _client.itemsApi
@@ -448,7 +581,6 @@ class MediaBarRepository {
                   limit: _poolSize,
                   fields: _fields,
                   enableImageTypes: 'Backdrop,Logo,Banner',
-                  hideWatched: hideWatched,
                 )
                 .timeout(const Duration(seconds: 15))
           : await _client.itemsApi
@@ -461,12 +593,8 @@ class MediaBarRepository {
                 )
                 .timeout(const Duration(seconds: 15));
 
-      final rawItems = (response['Items'] as List? ?? [])
-          .cast<Map<String, dynamic>>();
-      if (!(hideWatched ?? false)) return rawItems;
-      return rawItems
-          .where((item) => !isRawItemWatchedForRecentRow(item))
-          .toList();
+      final rawItems = response['Items'] as List? ?? [];
+      return rawItems.cast<Map<String, dynamic>>();
     } catch (error) {
       final statusCode = error is DioException
           ? (error.response?.statusCode ?? 0)
@@ -474,140 +602,12 @@ class MediaBarRepository {
       if (statusCode == 401 || statusCode == 403) {
         return const <Map<String, dynamic>>[];
       }
-      return _fetchItemsFromFallbackSource(itemTypes, limit, parentId: parentId);
+      return _fetchItemsFromFallbackSource(
+        itemTypes,
+        limit,
+        parentId: parentId,
+      );
     }
-  }
-
-  bool get _isNewReleaseSource =>
-      _prefs.get(UserPreferences.mediaBarSourceType) ==
-      UserPreferences.mediaBarSourceNewReleases;
-
-  /// Series with episodes that aired within the window, newest first. A series'
-  /// own date is its first season's, so the episodes are asked for and brought
-  /// back to their series.
-  Future<List<Map<String, dynamic>>> _fetchNewReleaseSeries(
-    List<String>? itemTypes,
-    int limit, {
-    String? parentId,
-  }) async {
-    // A movie library, or movies only. Nothing here, so a movie library doesn't
-    // add random movies next to the new series. If every library is empty, the
-    // bar falls back to random titles.
-    if (itemTypes != null && !itemTypes.contains('Series')) return const [];
-    try {
-      final episodes = await _recentEpisodes(parentId: parentId, limit: 300);
-      final seriesIds = <String>[];
-      for (final episode in episodes) {
-        final id = episode['SeriesId']?.toString();
-        if (id == null || seriesIds.contains(id)) continue;
-        seriesIds.add(id);
-        if (seriesIds.length >= _poolSize) break;
-      }
-      if (seriesIds.isEmpty) return const [];
-
-      final response = await _client.itemsApi
-          .getItems(
-            ids: seriesIds,
-            fields: _fields,
-            enableTotalRecordCount: false,
-            enableImageTypes: 'Backdrop,Logo,Banner',
-          )
-          .timeout(const Duration(seconds: 15));
-      return (response['Items'] as List? ?? []).cast<Map<String, dynamic>>();
-    } catch (error) {
-      // A server that fails falls back to random titles, so the bar doesn't
-      // vanish as if nothing aired.
-      final statusCode = error is DioException
-          ? (error.response?.statusCode ?? 0)
-          : 0;
-      if (statusCode == 401 || statusCode == 403) {
-        return const <Map<String, dynamic>>[];
-      }
-      return _fetchItems(itemTypes, limit, parentId: parentId, random: true);
-    }
-  }
-
-  /// Episodes under [parentId] that aired within the window, newest first.
-  /// The server may ignore the date floor or list episodes it only knows from
-  /// metadata, so [mediaBarNewReleaseOf] checks every one again.
-  Future<List<Map<String, dynamic>>> _recentEpisodes({
-    String? parentId,
-    required int limit,
-  }) async {
-    final days = _prefs.get(UserPreferences.mediaBarNewReleaseDays);
-    final response = await _client.itemsApi
-        .getItems(
-          parentId: parentId,
-          includeItemTypes: const ['Episode'],
-          recursive: true,
-          sortBy: 'PremiereDate',
-          sortOrder: 'Descending',
-          minPremiereDate: DateTime.now().subtract(Duration(days: days)),
-          limit: limit,
-          enableTotalRecordCount: false,
-        )
-        .timeout(const Duration(seconds: 15));
-    final now = DateTime.now();
-    return (response['Items'] as List? ?? [])
-        .cast<Map<String, dynamic>>()
-        .where((episode) => isRecentlyAiredEpisode(episode, now: now, days: days))
-        .toList();
-  }
-
-  /// Every episode of a season, aired or not, to tell a season released at once
-  /// from one whose last few episodes came out together.
-  Future<List<Map<String, dynamic>>> _seasonEpisodes(String seasonId) async {
-    final response = await _client.itemsApi
-        .getItems(
-          parentId: seasonId,
-          includeItemTypes: const ['Episode'],
-          recursive: true,
-          limit: 200,
-          enableTotalRecordCount: false,
-        )
-        .timeout(const Duration(seconds: 15));
-    return (response['Items'] as List? ?? []).cast<Map<String, dynamic>>();
-  }
-
-  /// What aired lately for each series slide on the server, by item id. Asked
-  /// for once the bar shows, so a slow server only holds back the labels.
-  Future<Map<String, MediaBarNewReleaseInfo>> loadNewReleases(
-    List<MediaBarSlideItem> slides,
-  ) async {
-    if (!_prefs.get(UserPreferences.mediaBarNewReleaseBanner)) return const {};
-    final days = _prefs.get(UserPreferences.mediaBarNewReleaseDays);
-    final now = DateTime.now();
-    final releases = <String, MediaBarNewReleaseInfo>{};
-    await mapBounded(
-      slides
-          .where((slide) => !slide.isExternal && slide.itemType == 'Series')
-          .toList(),
-      _sourceConcurrency,
-      (series) async {
-        try {
-          final recent = await _recentEpisodes(
-            parentId: series.itemId,
-            limit: 100,
-          );
-          // Only a season with several recent episodes on one day can have
-          // come out at once, so only then is the whole season fetched.
-          final seasonId = mediaBarSeasonToCheck(recent, now: now, days: days);
-          final release = mediaBarNewReleaseOf(
-            recent,
-            latestSeason: seasonId == null
-                ? null
-                : await _seasonEpisodes(seasonId),
-            now: now,
-            days: days,
-          );
-          if (release != null) releases[series.itemId] = release;
-        } catch (_) {
-          // A series that can't be asked about just goes without a label.
-        }
-        return null;
-      },
-    );
-    return releases;
   }
 
   Future<List<Map<String, dynamic>>> _fetchItemsFromFallbackSource(
@@ -905,118 +905,6 @@ class MediaBarRepository {
           const [],
     );
   }
-}
-
-/// The fewest episodes a season released at once has. A two episode premiere is
-/// still a season aired week by week.
-const _seasonDropEpisodes = 3;
-
-/// An episode that is really on the server and aired within the last [days].
-@visibleForTesting
-bool isRecentlyAiredEpisode(
-  Map<String, dynamic> episode, {
-  required DateTime now,
-  required int days,
-}) {
-  // A Virtual episode is one the server only knows from metadata.
-  if (episode['LocationType'] == 'Virtual') return false;
-  final aired = DateTime.tryParse(episode['PremiereDate'] as String? ?? '');
-  if (aired == null) return false;
-  return !aired.isAfter(now) && !aired.isBefore(now.subtract(Duration(days: days)));
-}
-
-int _seasonOf(Map<String, dynamic> episode) =>
-    (episode['ParentIndexNumber'] as num?)?.toInt() ?? 0;
-
-/// When an episode aired. Only called on episodes that passed
-/// [isRecentlyAiredEpisode], so the date is there.
-DateTime _airedAt(Map<String, dynamic> episode) =>
-    DateTime.parse(episode['PremiereDate'] as String).toUtc();
-
-/// The air day of an episode in UTC, or null when it has no air date.
-String? _airDay(Map<String, dynamic> episode) {
-  final aired = DateTime.tryParse(episode['PremiereDate'] as String? ?? '');
-  if (aired == null) return null;
-  final day = aired.toUtc();
-  return '${day.year}-${day.month}-${day.day}';
-}
-
-/// The latest season's id when several of its recent episodes share an air
-/// day, which is the only case worth fetching the whole season for.
-@visibleForTesting
-String? mediaBarSeasonToCheck(
-  List<Map<String, dynamic>> recentEpisodes, {
-  required DateTime now,
-  required int days,
-}) {
-  final aired = [
-    for (final episode in recentEpisodes)
-      if (isRecentlyAiredEpisode(episode, now: now, days: days)) episode,
-  ];
-  if (aired.isEmpty) return null;
-
-  final latestSeason = aired.map(_seasonOf).reduce(math.max);
-  final perDay = <String, int>{};
-  for (final episode in aired.where((e) => _seasonOf(e) == latestSeason)) {
-    final day = _airDay(episode)!;
-    perDay[day] = (perDay[day] ?? 0) + 1;
-  }
-  if (!perDay.values.any((count) => count >= _seasonDropEpisodes)) return null;
-  return aired
-      .firstWhere((e) => _seasonOf(e) == latestSeason)['SeasonId']
-      ?.toString();
-}
-
-/// What aired lately for one series. [recentEpisodes] are the ones aired within
-/// the window. [latestSeason] holds every episode of the latest season, when
-/// [mediaBarSeasonToCheck] asked for it. A season whose episodes on the server
-/// all came out on one day was released at once, the way a streaming service
-/// drops one. Anything else is new episodes, a split season's second part
-/// included.
-@visibleForTesting
-MediaBarNewReleaseInfo? mediaBarNewReleaseOf(
-  List<Map<String, dynamic>> recentEpisodes, {
-  List<Map<String, dynamic>>? latestSeason,
-  required DateTime now,
-  required int days,
-}) {
-  final aired = [
-    for (final episode in recentEpisodes)
-      if (isRecentlyAiredEpisode(episode, now: now, days: days)) episode,
-  ];
-  if (aired.isEmpty) return null;
-
-  if (latestSeason != null) {
-    final present = [
-      for (final episode in latestSeason)
-        if (episode['LocationType'] != 'Virtual') episode,
-    ];
-    final airDays = present.map(_airDay).toSet();
-    if (present.length >= _seasonDropEpisodes &&
-        airDays.length == 1 &&
-        airDays.single != null) {
-      final season = _seasonOf(present.first);
-      return MediaBarNewReleaseInfo(
-        kind: season <= 1
-            ? MediaBarNewRelease.newSeries
-            : MediaBarNewRelease.newSeason,
-        season: season,
-      );
-    }
-  }
-
-  final season = aired.map(_seasonOf).reduce(math.max);
-  final inSeason = [
-    for (final episode in aired)
-      if (_seasonOf(episode) == season) episode,
-  ]..sort((a, b) => _airedAt(a).compareTo(_airedAt(b)));
-  final latest = inSeason.last;
-
-  return MediaBarNewReleaseInfo(
-    kind: MediaBarNewRelease.newEpisodes,
-    season: season,
-    episode: (latest['IndexNumber'] as num?)?.toInt(),
-  );
 }
 
 // A mixed library names no collection type, so the bar takes it for either

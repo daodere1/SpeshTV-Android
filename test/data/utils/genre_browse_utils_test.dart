@@ -28,6 +28,18 @@ class _FakeImageApi implements ImageApi {
 }
 
 void main() {
+  test('returned genre items survive a missing or zero server total', () {
+    expect(genrePageCount({'Items': [{}, {}], 'TotalRecordCount': 0}), 2);
+    expect(genrePageCount({'Items': [{}]}), 1);
+    expect(genrePageCount({'Items': [{}], 'TotalRecordCount': 20}), 20);
+    expect(genrePageCount({'Items': [], 'TotalRecordCount': 0}), 0);
+  });
+  test('missing genre counts are unknown, not confirmed empty', () {
+    expect(hasGenreItemCount({'Id': 'action', 'Name': 'Action'}), false);
+    expect(hasGenreItemCount({'ChildCount': null}), false);
+    expect(hasGenreItemCount({'MovieCount': 0}), true);
+    expect(hasGenreItemCount({'SeriesCount': '12'}), true);
+  });
   // Asking for types this list doesn't carry falls back to the whole list, so
   // dropping one here doesn't narrow a caller, it widens it to everything.
   group('narrowing the types a genre row is built from', () {

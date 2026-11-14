@@ -1,13 +1,17 @@
 import 'dart:async';
+import '../../util/spesh_load_metrics.dart';
+import '../services/spesh_browse_dedupe.dart';
+import '../services/spesh_progress_resolver.dart';
+import '../../ui/widgets/spesh_brand.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:get_it/get_it.dart';
 import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:server_core/server_core.dart' hide ImageType;
-import 'package:server_silo/server_silo.dart' show SiloMediaServerClient;
 
 import '../../preference/preference_constants.dart';
 import '../../preference/user_preferences.dart';
+import '../../preference/spesh_view_preferences.dart';
 import '../../util/accent_folding.dart';
 import '../../util/network_errors.dart';
 import '../../util/parental_rating_severity.dart';
@@ -149,6 +153,8 @@ class LibraryBrowseViewModel extends ChangeNotifier {
 
   bool _loadingMore = false;
   bool get loadingMore => _loadingMore;
+  late final _browseSourceResolver = SpeshProgressResolver(_client);
+  bool get _dedupeCombined => speshWeb && _effectiveParentId == null && !isPlaylistBrowse;
 
   late LibrarySortBy _sortBy;
   LibrarySortBy get sortBy => _sortBy;
@@ -163,9 +169,8 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   LikedStatusFilter get likedFilter => _likedFilter;
 
   /// Whether the My Rating sort can actually be served, which needs the
-  /// Moonfin plugin on the server, or Silo, which keeps ratings itself.
+  /// Moonfin plugin on the server.
   bool get supportsMyRatingSort =>
-      _client is SiloMediaServerClient ||
       GetIt.instance.isRegistered<PluginSyncService>() &&
       GetIt.instance<PluginSyncService>().pluginAvailable;
 
@@ -261,11 +266,6 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   String? get selectedCategoryTab => _selectedCategoryTab;
 
   int _pageWalkGeneration = 0;
-
-  /// Bumped by every [load], so a page still in flight for the list it drops
-  /// (a scroll page, or the first page of a filter changed again before it
-  /// came back) leaves the new list alone.
-  int _listGeneration = 0;
   bool _disposed = false;
 
   // Grouping walks every item and sorts the keys, and the grid asks for it
@@ -362,9 +362,8 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   }
 
   Future<List<AggregatedItem>> _filterLibraryItems(
-    List<AggregatedItem> items, {
-    required int generation,
-  }) async {
+    List<AggregatedItem> items,
+  ) async {
     items = withoutBlockedItems(items);
     if (!isPlaylistBrowse) return items;
 
@@ -381,8 +380,6 @@ class LibraryBrowseViewModel extends ChangeNotifier {
               assumeNonEmptyWhenUnknown: !isMusicBrowse,
             ),
     );
-    // A reload cleared the categories while these were resolving.
-    if (generation != _listGeneration) return const [];
 
     final kept = <AggregatedItem>[];
     for (var i = 0; i < items.length; i++) {
@@ -533,15 +530,18 @@ class LibraryBrowseViewModel extends ChangeNotifier {
 
   String get _prefKey {
     final baseKey = genreId ?? studioName ?? libraryId;
+    final scoped = const bool.fromEnvironment('SPESHTV_WEB')
+        ? speshViewScope(_client.baseUrl, _client.userId, baseKey) : baseKey;
     if (includeItemTypes != null && includeItemTypes!.isNotEmpty) {
-      return '${baseKey}_${includeItemTypes!.join("_")}';
+      return '${scoped}_${includeItemTypes!.join("_")}';
     }
-    return baseKey;
+    return scoped;
   }
 
   String get _imagePrefKey {
     if (genreId != null && libraryId.isNotEmpty) {
-      return libraryId;
+      return const bool.fromEnvironment('SPESHTV_WEB')
+          ? speshViewScope(_client.baseUrl, _client.userId, libraryId) : libraryId;
     }
     return _prefKey;
   }
@@ -557,16 +557,13 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   Future<void> load() async {
     // Any page walk still running belongs to the list we are about to drop.
     _pageWalkGeneration++;
-    final generation = ++_listGeneration;
-    // A scroll page still on its way belongs to the old list, so it shouldn't
-    // hold up paging of the new one.
-    _loadingMore = false;
     _state = LibraryBrowseState.loading;
     _items = const [];
     _totalCount = 0;
     _filteredOutCount = 0;
     _fetchedCount = 0;
     _renderedItemIds.clear();
+    _browseSourceResolver.invalidate();
     _playlistCategoryMap.clear();
     _totalCountKnown = true;
     _hasMoreFromPageSize = false;
@@ -633,11 +630,9 @@ class LibraryBrowseViewModel extends ChangeNotifier {
       _refreshPosterSizeFromScope();
 
       await imageTypeSync;
-      await _fetchPage(0, generation: generation);
-      if (generation != _listGeneration) return;
+      await _fetchPage(0);
       _state = LibraryBrowseState.ready;
     } catch (e) {
-      if (generation != _listGeneration) return;
       _error = e;
       _isNetworkError = isNetworkException(e);
       _state = LibraryBrowseState.error;
@@ -677,21 +672,6 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     bool stillWanted() => !_disposed && _pageWalkGeneration == generation;
 
     try {
-      // A server with a letter index says where the letter starts, so
-      // everything up to it loads in one request instead of a walk of
-      // pages (Silo). The walk below still finishes the job.
-      final position = await _letterPosition(letter);
-      if (!stillWanted()) return false;
-      if (position != null && position >= _fetchedCount && hasMore) {
-        while (_loadingMore) {
-          await Future.delayed(const Duration(milliseconds: 30));
-          if (!stillWanted()) return false;
-        }
-        await loadMore(
-          pageSizeOverride: position - _fetchedCount + _pageSize,
-          notify: false,
-        );
-      }
       while (!hasPrefix() && hasMore) {
         if (!stillWanted()) return false;
         // A scroll triggered page may be in flight, and calling loadMore now
@@ -712,60 +692,33 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     return hasPrefix();
   }
 
-  /// Where [letter]'s titles start in this list, from a server that keeps
-  /// a letter index ([LetterPositionApi]), or null for any other server or
-  /// when it can't say.
-  Future<int?> _letterPosition(String letter) async {
-    final api = _client.itemsApi;
-    final parentId = _effectiveParentId;
-    if (api is! LetterPositionApi || parentId == null) return null;
-    try {
-      return await (api as LetterPositionApi).letterPosition(
-        letter,
-        parentId: parentId,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
   Future<void> loadMore({int? pageSizeOverride, bool notify = true}) async {
     if (_loadingMore || !hasMore) return;
     _loadingMore = true;
     if (notify) notifyListeners();
 
-    final previouslyFetched = _fetchedCount;
-    final generation = _listGeneration;
     try {
-      await _fetchPage(
-        _fetchedCount,
-        generation: generation,
-        pageSizeOverride: pageSizeOverride,
-      );
-      // Stop on a page the server had nothing left for, not on one that only
-      // repeated what is already shown, which a random sort does by chance.
-      // A reload in the meantime reset the count, so it says nothing here.
-      if (generation == _listGeneration &&
-          _fetchedCount <= previouslyFetched) {
-        _totalCount = _items.length;
-        _hasMoreFromPageSize = false;
+      final visibleCount = _items.length;
+      // Backfill duplicate-only pages without walking an entire library.
+      for (var attempt = 0; attempt < 5 && !_disposed; attempt++) {
+        final previouslyFetched = _fetchedCount;
+        await _fetchPage(_fetchedCount, pageSizeOverride: pageSizeOverride);
+        if (_fetchedCount <= previouslyFetched) {
+          _totalCount = _items.length;
+          _hasMoreFromPageSize = false;
+          break;
+        }
+        if (_items.length > visibleCount || !hasMore) break;
       }
     } catch (_) {}
 
-    // After a reload the flag belongs to the new list, which may already
-    // have a page of its own in flight.
-    if (generation != _listGeneration) return;
     _loadingMore = false;
-    if (notify) notifyListeners();
+    if (notify && !_disposed) notifyListeners();
   }
 
-  /// [generation] is the list the caller started for: [load] reaches this
-  /// only after awaits of its own, by when a newer load may have begun.
-  Future<void> _fetchPage(
-    int startIndex, {
-    required int generation,
-    int? pageSizeOverride,
-  }) async {
+  Future<void> _fetchPage(int startIndex, {int? pageSizeOverride}) async {
+    final generation = _pageWalkGeneration;
+    final pageTimer = Stopwatch()..start();
     final pageSize = pageSizeOverride ?? (startIndex == 0 ? _firstPageSize : _pageSize);
     final filters = <String>[];
     if (_playedFilter == PlayedStatusFilter.watched) {
@@ -806,6 +759,8 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     final groupCollections = _prefs.get(UserPreferences.groupItemsIntoCollections);
     if (includeItemTypes != null) {
       includeTypes = List<String>.from(includeItemTypes!);
+      // An omitted value lets the server regroup movies despite the UI setting.
+      collapseBoxSets = false;
       if (groupCollections &&
           (includeTypes.contains('Movie') ||
               includeTypes.contains('Series'))) {
@@ -974,49 +929,44 @@ class LibraryBrowseViewModel extends ChangeNotifier {
         isFavorite: _favoriteFilter ? true : null,
       );
     } else {
-      final sortOrder = _sortDirection == SortDirection.ascending
-          ? 'Ascending'
-          : 'Descending';
-      final results = await Future.wait([
-        _fetchItemsWithFallback(
-          parentId: _effectiveParentId,
-          genreIds: genreId != null ? [genreId!] : null,
-          studios: studioName != null ? [studioName!] : null,
-          includeItemTypes: includeTypes,
-          excludeItemTypes: excludeTypes,
-          collapseBoxSetItems: collapseBoxSets,
-          sortBy: sortBy,
+        final sortOrder = _sortDirection == SortDirection.ascending
+            ? 'Ascending' : 'Descending';
+        final results = await Future.wait([
+          _fetchItemsWithFallback(
+        parentId: _effectiveParentId,
+        genreIds: genreId != null ? [genreId!] : null,
+        studios: studioName != null ? [studioName!] : null,
+        includeItemTypes: includeTypes,
+        excludeItemTypes: excludeTypes,
+        collapseBoxSetItems: collapseBoxSets,
+        sortBy: sortBy,
           sortOrder: sortOrder,
-          startIndex: startIndex,
-          limit: pageSize,
-          recursive: recursive,
-          fields: _browseFields,
-          filters: filters.isEmpty ? null : filters,
-          seriesStatus: seriesStatus.isEmpty ? null : seriesStatus,
-          isFavorite: _favoriteFilter ? true : null,
-        ),
-        if (fetchDirectories)
-          _getFilteredItems(
-            parentId: _effectiveParentId,
-            genreIds: genreId != null ? [genreId!] : null,
-            studios: studioName != null ? [studioName!] : null,
-            includeItemTypes: kDirectoryItemTypes,
-            sortBy: 'SortName',
-            sortOrder: sortOrder,
-            recursive: recursive,
-            fields: _browseFields,
-            enableImageTypes: _imageTypes,
-            imageTypeLimit: _imageTypeLimit,
-            filters: filters.isEmpty ? null : filters,
-            isFavorite: _favoriteFilter ? true : null,
-            enableTotalRecordCount: false,
+        startIndex: startIndex,
+        limit: pageSize,
+        recursive: recursive,
+        fields: _dedupeCombined ? '$_browseFields,ProviderIds' : _browseFields,
+        filters: filters.isEmpty ? null : filters,
+        seriesStatus: seriesStatus.isEmpty ? null : seriesStatus,
+        isFavorite: _favoriteFilter ? true : null,
           ),
-      ]);
-      response = results.first;
-      if (fetchDirectories) {
-        directories = (results.last['Items'] as List?) ?? const [];
-      }
+          if (fetchDirectories)
+            _getFilteredItems(
+              parentId: _effectiveParentId,
+              genreIds: genreId != null ? [genreId!] : null,
+              studios: studioName != null ? [studioName!] : null,
+              includeItemTypes: kDirectoryItemTypes,
+              sortBy: 'SortName', sortOrder: sortOrder, recursive: recursive,
+              fields: _browseFields, enableImageTypes: _imageTypes,
+              imageTypeLimit: _imageTypeLimit,
+              filters: filters.isEmpty ? null : filters,
+              isFavorite: _favoriteFilter ? true : null,
+              enableTotalRecordCount: false,
+            ),
+        ]);
+        response = results.first;
+        if (fetchDirectories) directories = (results.last['Items'] as List?) ?? const [];
     }
+    if (startIndex == 0) _directoryCount = directories.length;
 
     final rawItems = (response['Items'] as List?) ?? [];
     var mapped = [...directories, ...rawItems]
@@ -1034,13 +984,8 @@ class LibraryBrowseViewModel extends ChangeNotifier {
         .whereType<AggregatedItem>()
         .toList();
 
-    var filtered = await _filterLibraryItems(mapped, generation: generation);
-
-    // A reload while this page was on its way owns the list now. Taking the
-    // page would mark its ids rendered, hiding them from the new list, and
-    // move the paging offset off it.
-    if (generation != _listGeneration) return;
-    if (startIndex == 0) _directoryCount = directories.length;
+    var filtered = await _filterLibraryItems(mapped);
+    if (_disposed || generation != _pageWalkGeneration) return;
 
     // Counted for every browse, not just playlists. A dropped item is gone for
     // good, so the total has to shrink with it or the grid keeps asking for
@@ -1076,6 +1021,19 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     } else {
       _items = [..._items, ...filtered];
     }
+    if (_dedupeCombined) {
+      final before = _items.length;
+      _items = await preferLocalBrowseItems(_items, (item) async =>
+        (await _browseSourceResolver.describe(item)).source);
+      _filteredOutCount += before - _items.length;
+      // Paging follows raw server offsets, never the number of visible cards.
+      if (totalFromServer != null) {
+        _hasMoreFromPageSize = _fetchedCount < totalFromServer;
+        _totalCount = _hasMoreFromPageSize
+            ? totalFromServer - _filteredOutCount : _items.length;
+      }
+    }
+    SpeshLoadMetrics.record('library-page', pageTimer, count: rawItems.length);
   }
 
   /// Loads every item the user rated, ordered by their score, through the
@@ -1464,6 +1422,16 @@ class LibraryBrowseViewModel extends ChangeNotifier {
     await load();
   }
 
+  int get activeFilterCount =>
+      (_playedFilter != PlayedStatusFilter.all ? 1 : 0) +
+      (_likedFilter != LikedStatusFilter.all ? 1 : 0) +
+      (_seriesFilter != SeriesStatusFilter.all ? 1 : 0) +
+      (_favoriteFilter && !favoritesOnly ? 1 : 0) +
+      _featureFilters.length + _videoQualityFilters.length +
+      _videoSourceFilters.length + _genreFilters.length +
+      _officialRatingFilters.length + _tagFilters.length + _yearFilters.length +
+      _audioLanguageFilters.length + _subtitleLanguageFilters.length;
+
   bool get hasActiveFilters =>
       _playedFilter != PlayedStatusFilter.all ||
       _likedFilter != LikedStatusFilter.all ||
@@ -1737,14 +1705,17 @@ class LibraryBrowseViewModel extends ChangeNotifier {
   bool get supportsVideoFilters =>
       !isMusicBrowse && !isBookLibrary && !isPlaylistBrowse;
 
-  /// Options the server can't filter on stay out of the picker rather than
-  /// sitting there doing nothing.
-  bool get supportsUhdFilter => _client.features.supportsUhdFilter;
+  /// Emby's items query takes no 4K flag and its series status holds only
+  /// continuing and ended, so those two options stay out of the picker rather
+  /// than sitting there doing nothing.
+  bool get supportsUhdFilter => _client.serverType != ServerType.emby;
 
-  bool get supportsExtraFilters => _client.features.supportsExtraLibraryFilters;
+  /// Plex keeps no series status, likes, 3D, extras or disc source to filter
+  /// on, so those stay out of the picker for the same reason.
+  bool get supportsExtraFilters => _client.serverType != ServerType.plex;
 
   bool get supportsUnreleasedSeriesFilter =>
-      _client.features.supportsUnreleasedSeriesFilter;
+      _client.serverType == ServerType.jellyfin;
 
   List<LibrarySortBy> get sortOptions => LibrarySortBy.optionsFor(
     isSongsBrowse: isSongsBrowse,

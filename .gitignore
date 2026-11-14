@@ -138,7 +138,25 @@ web/drift_worker.js.map
 /scripts/.cache/
 /.arb-work/
 /.arb-work-brand/
+/.gradle-home/
+/.native/
+/.toolchains/
 
 # Tizen build output. Tizen was removed upstream; these are generated
 # NuGet/MSBuild artifacts.
 tizen/obj/
+
+# Private signing/configuration and generated distribution artifacts
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.aab
+*.apk
+.env
+.env.*
+!.env.example
+!*.env.example
+**/local.properties
+**/keystore.properties
+**/key.properties

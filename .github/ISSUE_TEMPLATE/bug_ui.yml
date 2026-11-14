@@ -6,7 +6,7 @@ body:
   - type: input
     id: app_version
     attributes:
-      label: Moonfin version
+      label: SpeshTV version
       description: The app version / release tag (e.g., 1.0.0)
       placeholder: 1.0.0
     validations:
@@ -42,17 +42,6 @@ body:
     attributes:
       label: Device model
       description: "e.g. Pixel 8, iPhone 15, MacBook Air M2, etc."
-    validations:
-      required: true
-
-  - type: dropdown
-    id: server_type
-    attributes:
-      label: Server
-      description: The media server Moonfin is signed in to
-      options:
-        - Jellyfin
-        - Emby
     validations:
       required: true
 

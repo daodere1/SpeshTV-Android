@@ -32,6 +32,7 @@ import '../../../data/services/media_server_client_factory.dart';
 import '../../../data/services/reader_settings_store.dart';
 import '../../../util/focus/dpad_keys.dart';
 import '../../../util/platform_detection.dart';
+import '../../../util/insecure_certificates.dart';
 import '../../../util/webview_client_cert.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../util/error_message.dart';
@@ -330,7 +331,7 @@ class _BookReaderScreenState extends State<BookReaderScreen>
   }
 
   bool get _reportsEpubProgress =>
-      _resolveClient().features.supportsBookProgressReports;
+      _resolveClient().serverType == ServerType.jellyfin;
 
   String get _pdfProgressPrefKey {
     final item = _item;
@@ -3608,10 +3609,7 @@ class _BookReaderScreenState extends State<BookReaderScreen>
       },
       onReceivedServerTrustAuthRequest: gAllowSelfSignedCertificates
           ? (controller, challenge) async => ServerTrustAuthResponse(
-              action:
-                  acceptsUntrustedCertificate(challenge.protectionSpace.host)
-                  ? ServerTrustAuthResponseAction.PROCEED
-                  : ServerTrustAuthResponseAction.CANCEL,
+              action: ServerTrustAuthResponseAction.PROCEED,
             )
           : null,
       onReceivedClientCertRequest: clientCertificateResponse,

@@ -30,7 +30,7 @@ Color get _navyBackground => AppColorScheme.background;
 const _horizontalPadding = 60.0;
 const _kCompactBreakpoint = 600.0;
 const _genresPageSize = 200;
-const _initialArtworkBatch = 12;
+const _initialArtworkBatch = 4;
 const _backgroundArtworkConcurrency = 4;
 
 /// Only movies and series can be opened from this screen, so counting anything
@@ -65,6 +65,7 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
 
   List<GenreCardData> _genres = [];
   bool _isLoading = true;
+  bool _loadFailed = false;
   bool _lastGroupCollections = false;
   final Set<String> _usedArtworkIds = {};
 
@@ -107,6 +108,7 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
 
   Future<void> _load() async {
     final token = ++_loadToken;
+    if (mounted) setState(() { _isLoading = true; _loadFailed = false; });
     try {
       _usedArtworkIds.clear();
       final items = <dynamic>[];
@@ -120,7 +122,7 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
           recursive: true,
           startIndex: startIndex,
           limit: _genresPageSize,
-          fields: 'ItemCounts,PrimaryImageTag,ImageTags,BackdropImageTags,PrimaryImageAspectRatio',
+          fields: 'ItemCounts,PrimaryImageAspectRatio',
           includeItemTypes: _videoGenreItemTypes,
         );
 
@@ -134,6 +136,8 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
         if (total != null && startIndex >= total) break;
       }
 
+      // Genre DTO counts can be zero even when its item query has matches.
+      // Verify those tiles in _loadGenreItems instead of hiding them here.
       final temp = items
           .map((g) {
             final data = g as Map<String, dynamic>;
@@ -146,7 +150,6 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
               itemCount: itemCount,
             );
           })
-          .where((x) => x.itemCount > 0 || !genreReportsCounts(x.data))
           .toList();
 
       _genres = temp.map((x) {
@@ -167,6 +170,7 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
         );
       }).toList();
     } catch (e) {
+      if (token == _loadToken) _loadFailed = true;
       // The screen shows the same empty state either way, so without this a
       // server that refuses the request looks like a library with no genres.
       if (GetIt.instance.isRegistered<LogService>()) {
@@ -281,10 +285,7 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
       );
 
       final items = (response['Items'] as List?) ?? [];
-      final rawTotalCount = response['TotalRecordCount'];
-      final totalCount = rawTotalCount is num
-          ? rawTotalCount.toInt()
-          : items.length;
+      final totalCount = genrePageCount(response);
       if (totalCount <= 0 || items.isEmpty) {
         if (_genres.remove(genre) && !_disposed && mounted) {
           setState(() {});
@@ -455,6 +456,13 @@ class _AllGenresScreenState extends State<AllGenresScreen> {
     }
 
     if (_genres.isEmpty) {
+      if (_loadFailed) {
+        return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Could not load genres.'),
+          FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh),
+            label: Text(AppLocalizations.of(context).retry)),
+        ]));
+      }
       return Center(
         child: Text(
           AppLocalizations.of(context).noGenresFound,

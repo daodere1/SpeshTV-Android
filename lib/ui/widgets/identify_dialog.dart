@@ -55,9 +55,7 @@ class IdentifyDialog extends StatefulWidget {
     this.providerIds,
   });
 
-  /// Answers the id [itemId] has after a match was applied, which can be a new
-  /// one, or null when nothing was applied.
-  static Future<String?> show(
+  static Future<bool?> show(
     BuildContext context, {
     required String itemId,
     String? itemType,
@@ -66,7 +64,7 @@ class IdentifyDialog extends StatefulWidget {
     String? itemPath,
     Map<String, dynamic>? providerIds,
   }) {
-    return showFocusRestoringDialog<String>(
+    return showFocusRestoringDialog<bool>(
       context: context,
       builder: (ctx) => IdentifyDialog(
         itemId: itemId,
@@ -176,7 +174,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
     }
   }
 
-  void _closeDialog([String? result]) {
+  void _closeDialog([bool? result]) {
     if (!mounted) return;
     FocusScope.of(context).unfocus();
     Navigator.of(context).pop(result);
@@ -313,7 +311,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
       if (raw['LockData'] == true) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).adminMetadataItemLocked)));
-        _closeDialog();
+        _closeDialog(false);
         return;
       }
       setState(() {
@@ -529,7 +527,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
 
     setState(() => _applying = true);
     try {
-      final movedTo = await _adminApi.applyRemoteSearchResult(
+      await _adminApi.applyRemoteSearchResult(
         _targetItemId,
         result,
         replaceAllImages: replaceAllImages,
@@ -539,11 +537,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.adminRemoteMetadataApplied)),
       );
-      // A new id is only followed when the match was for this item itself,
-      // not for the series of an episode or season.
-      _closeDialog(
-        (_targetItemId == widget.itemId ? movedTo : null) ?? widget.itemId,
-      );
+      _closeDialog(true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -598,7 +592,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
                       if (!event.isActionable) return KeyEventResult.ignored;
                       final key = event.logicalKey;
                       if (key.isSelectKey) {
-                        _closeDialog();
+                        _closeDialog(false);
                         return KeyEventResult.handled;
                       }
                       if (_isTV && key.isDownKey) {
@@ -617,7 +611,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
                       builder: (btnCtx) {
                         final hasFocus = Focus.of(btnCtx).hasFocus;
                         return InkWell(
-                          onTap: () => _closeDialog(),
+                          onTap: () => _closeDialog(false),
                           borderRadius: AppRadius.circular(20),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
@@ -682,7 +676,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
                           }
                           final key = event.logicalKey;
                           if (key.isSelectKey) {
-                            _closeDialog();
+                            _closeDialog(false);
                             return KeyEventResult.handled;
                           }
                           if (!_isTV) return KeyEventResult.ignored;
@@ -700,7 +694,7 @@ class _IdentifyDialogState extends State<IdentifyDialog> {
                           builder: (btnCtx) {
                             final hasFocus = Focus.of(btnCtx).hasFocus;
                             return TextButton(
-                              onPressed: () => _closeDialog(),
+                              onPressed: () => _closeDialog(false),
                               style: TextButton.styleFrom(
                                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                                 minimumSize: const Size(60, 30),

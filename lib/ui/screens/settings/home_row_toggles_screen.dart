@@ -16,7 +16,6 @@ import '../../widgets/settings/clean_settings_typography.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../widgets/settings/preference_tiles.dart';
 import '../detail/playlist_sort_filter_bar.dart';
-import '../../../util/signed_in_server_features.dart';
 import 'settings_app_bar.dart';
 
 class HomeRowTogglesScreen extends StatefulWidget {
@@ -29,46 +28,12 @@ class HomeRowTogglesScreen extends StatefulWidget {
 class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
   final _prefs = GetIt.instance<UserPreferences>();
   late final PluginSyncService _syncService;
-  Future<void> _hideWatchedConfigSync = Future<void>.value();
 
   @override
   void initState() {
     super.initState();
     _syncService = GetIt.instance<PluginSyncService>();
     _syncService.addListener(_onSyncChanged);
-    _syncHideWatchedFromServerIfUnset();
-  }
-
-  void _syncHideWatchedFromServerIfUnset() {
-    final hasScope = _prefs.activeProfileScopeSuffix() != null;
-    if (_prefs.containsPreference(
-      UserPreferences.hideWatchedInRecentRows,
-      scopedOnly: hasScope,
-    )) {
-      return;
-    }
-    if (!GetIt.instance.isRegistered<MediaServerClient>()) return;
-    final client = GetIt.instance<MediaServerClient>();
-    final initialScope = _prefs.activeProfileScopeSuffix();
-    _hideWatchedConfigSync = _hideWatchedConfigSync.then((_) async {
-      try {
-        final config = await client.usersApi.getUserConfiguration();
-        if (_prefs.activeProfileScopeSuffix() != initialScope) {
-          return;
-        }
-        if (!_prefs.containsPreference(
-              UserPreferences.hideWatchedInRecentRows,
-              scopedOnly: initialScope != null,
-            ) &&
-            config.hidePlayedInLatest) {
-          _prefs.seedHideWatchedFromServer(
-            config,
-            expectedProfileScope: initialScope,
-          );
-          if (mounted) setState(() {});
-        }
-      } catch (_) {}
-    });
   }
 
   @override
@@ -94,46 +59,20 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
     GetIt.instance<HomeViewModel>().load(preserveExisting: false);
   }
 
-  void _onHideWatchedInRecentRowsChanged() {
-    _pushPersonalizationSync();
-    _reloadHomeRows();
-    if (!GetIt.instance.isRegistered<MediaServerClient>()) return;
-    final client = GetIt.instance<MediaServerClient>();
-    final initialScope = _prefs.activeProfileScopeSuffix();
-    _hideWatchedConfigSync = _hideWatchedConfigSync.then((_) async {
-      try {
-        final config = await client.usersApi.getUserConfiguration();
-        if (_prefs.activeProfileScopeSuffix() != initialScope) {
-          return;
-        }
-        final hideWatched = _prefs.get(UserPreferences.hideWatchedInRecentRows);
-        if (config.hidePlayedInLatest != hideWatched) {
-          await client.usersApi.updateUserConfiguration(
-            config.copyWith(hidePlayedInLatest: hideWatched),
-          );
-          _reloadHomeRows();
-        }
-      } catch (_) {}
-    });
-  }
-
   void _onFavoritesRowsToggleChanged() {
     _pushPersonalizationSync();
-    _reloadHomeRows();
     if (!mounted) return;
     setState(() {});
   }
 
   void _onCollectionsRowsToggleChanged() {
     _pushPersonalizationSync();
-    _reloadHomeRows();
     if (!mounted) return;
     setState(() {});
   }
 
   void _onGenresRowsToggleChanged() {
     _pushPersonalizationSync();
-    _reloadHomeRows();
     if (!mounted) return;
     setState(() {});
   }
@@ -220,14 +159,12 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
 
   void _onPlaylistsRowsToggleChanged() {
     _pushPersonalizationSync();
-    _reloadHomeRows();
     if (!mounted) return;
     setState(() {});
   }
 
   void _onAudioRowsToggleChanged() {
     _pushPersonalizationSync();
-    _reloadHomeRows();
     if (!mounted) return;
     setState(() {});
   }
@@ -362,9 +299,6 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
     final showGenresRows = _prefs.get(UserPreferences.displayGenresRows);
     final showPlaylistsRows = _prefs.get(UserPreferences.displayPlaylistsRows);
     final showAudioRows = _prefs.get(UserPreferences.displayAudioRows);
-    // Not offered when no signed-in server has music (all Silo, say).
-    final musicOnAnyServer = musicOnAnySignedInServer();
-    final playlistsOnAnyServer = playlistsOnAnySignedInServer();
     final showSinceYouWatchedRows = _prefs.get(UserPreferences.displaySinceYouWatchedRows);
     final sinceYouWatchedSource = _prefs.get(UserPreferences.sinceYouWatchedSource);
     final showRewatchRow = _prefs.get(UserPreferences.displayRewatchRow);
@@ -419,25 +353,15 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
                 ],
               ),
 
-              _SectionHeader(l10n.recentlyAddedAndReleased),
+              _SectionHeader(l10n.recentlyAdded),
               adaptiveListSection(
                 children: [
-                  SwitchPreferenceTile(
-                    preference: UserPreferences.hideWatchedInRecentRows,
-                    title: l10n.hideWatchedInRecentRows,
-                    subtitle: l10n.hideWatchedInRecentRowsDescription,
-                    icon: Icons.visibility_off_outlined,
-                    onChanged: _onHideWatchedInRecentRowsChanged,
-                  ),
                   SwitchPreferenceTile(
                     preference: UserPreferences.mergeRecentRowsByType,
                     title: l10n.mergeRecentRowsByType,
                     subtitle: l10n.mergeRecentRowsByTypeDescription,
                     icon: Icons.library_books,
-                    onChanged: () {
-                      _pushPersonalizationSync();
-                      _reloadHomeRows();
-                    },
+                    onChanged: _pushPersonalizationSync,
                   ),
                   EnumPreferenceTile<RecentlyReleasedSeriesType>(
                     preference: UserPreferences.recentlyReleasedSeriesType,
@@ -449,56 +373,51 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
                       RecentlyReleasedSeriesType.season => l10n.season,
                       RecentlyReleasedSeriesType.episode => l10n.episode,
                     },
-                    onChanged: () {
-                      _pushPersonalizationSync();
-                      _reloadHomeRows();
-                    },
+                    onChanged: _pushPersonalizationSync,
                   ),
                 ],
               ),
 
-              if (musicOnAnyServer) ...[
-                _SectionHeader(l10n.audio),
-                adaptiveListSection(
-                  children: [
-                    SwitchPreferenceTile(
-                      preference: UserPreferences.displayAudioRows,
-                      title: l10n.displayAudioRows,
-                      subtitle: l10n.displayAudioRowsSubtitle,
-                      icon: Icons.music_note,
-                      onChanged: _onAudioRowsToggleChanged,
+              _SectionHeader(l10n.audio),
+              adaptiveListSection(
+                children: [
+                  SwitchPreferenceTile(
+                    preference: UserPreferences.displayAudioRows,
+                    title: l10n.displayAudioRows,
+                    subtitle: l10n.displayAudioRowsSubtitle,
+                    icon: Icons.music_note,
+                    onChanged: _onAudioRowsToggleChanged,
+                  ),
+                  if (showAudioRows) ...[
+                    EnumPreferenceTile<LibrarySortBy>(
+                      preference: UserPreferences.audioRowsSortBy,
+                      title: l10n.audioRowsSorting,
+                      description: l10n.audioRowsSortingDescription,
+                      icon: Icons.sort,
+                      values: const [
+                        LibrarySortBy.name,
+                        LibrarySortBy.dateAdded,
+                        LibrarySortBy.premiereDate,
+                        LibrarySortBy.runtime,
+                        LibrarySortBy.random,
+                      ],
+                      labelOf: (v) => librarySortLabel(v, l10n),
+                      dialogLabelOf: (v) => librarySortLabel(v, l10n),
+                      onChanged: _onAudioSortChanged,
                     ),
-                    if (showAudioRows) ...[
-                      EnumPreferenceTile<LibrarySortBy>(
-                        preference: UserPreferences.audioRowsSortBy,
-                        title: l10n.audioRowsSorting,
-                        description: l10n.audioRowsSortingDescription,
-                        icon: Icons.sort,
-                        values: const [
-                          LibrarySortBy.name,
-                          LibrarySortBy.dateAdded,
-                          LibrarySortBy.premiereDate,
-                          LibrarySortBy.runtime,
-                          LibrarySortBy.random,
-                        ],
-                        labelOf: (v) => librarySortLabel(v, l10n),
-                        dialogLabelOf: (v) => librarySortLabel(v, l10n),
-                        onChanged: _onAudioSortChanged,
-                      ),
-                      EnumPreferenceTile<SortDirection>(
-                        preference: UserPreferences.audioRowsSortOrder,
-                        title: l10n.sortOrder,
-                        description: l10n.audioRowsSortOrderDescription,
-                        icon: Icons.swap_vert,
-                        labelOf: (v) => v == SortDirection.ascending
-                            ? l10n.ascending
-                            : l10n.descending,
-                        onChanged: _onAudioSortChanged,
-                      ),
-                    ],
+                    EnumPreferenceTile<SortDirection>(
+                      preference: UserPreferences.audioRowsSortOrder,
+                      title: l10n.sortOrder,
+                      description: l10n.audioRowsSortOrderDescription,
+                      icon: Icons.swap_vert,
+                      labelOf: (v) => v == SortDirection.ascending
+                          ? l10n.ascending
+                          : l10n.descending,
+                      onChanged: _onAudioSortChanged,
+                    ),
                   ],
-                ),
-              ],
+                ],
+              ),
 
               _SectionHeader(l10n.collections),
               adaptiveListSection(
@@ -616,49 +535,47 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
                 ],
               ),
 
-              if (playlistsOnAnyServer) ...[
-                _SectionHeader(l10n.playlists),
-                adaptiveListSection(
-                  children: [
-                    SwitchPreferenceTile(
-                      preference: UserPreferences.displayPlaylistsRows,
-                      title: l10n.displayPlaylistsRows,
-                      subtitle: l10n.displayPlaylistsRowsSubtitle,
-                      icon: Icons.playlist_play,
-                      onChanged: _onPlaylistsRowsToggleChanged,
+              _SectionHeader(l10n.playlists),
+              adaptiveListSection(
+                children: [
+                  SwitchPreferenceTile(
+                    preference: UserPreferences.displayPlaylistsRows,
+                    title: l10n.displayPlaylistsRows,
+                    subtitle: l10n.displayPlaylistsRowsSubtitle,
+                    icon: Icons.playlist_play,
+                    onChanged: _onPlaylistsRowsToggleChanged,
+                  ),
+                  if (showPlaylistsRows) ...[
+                    EnumPreferenceTile<LibrarySortBy>(
+                      preference: UserPreferences.playlistsRowSortBy,
+                      title: l10n.playlistsRowSorting,
+                      description: l10n.playlistsRowSortingDescription,
+                      icon: Icons.sort,
+                      labelOf: (v) => librarySortLabel(v, l10n),
+                      onChanged: _onPlaylistsSortChanged,
                     ),
-                    if (showPlaylistsRows) ...[
-                      EnumPreferenceTile<LibrarySortBy>(
-                        preference: UserPreferences.playlistsRowSortBy,
-                        title: l10n.playlistsRowSorting,
-                        description: l10n.playlistsRowSortingDescription,
-                        icon: Icons.sort,
-                        labelOf: (v) => librarySortLabel(v, l10n),
-                        onChanged: _onPlaylistsSortChanged,
-                      ),
-                      EnumPreferenceTile<SortDirection>(
-                        preference: UserPreferences.playlistsRowSortOrder,
-                        title: l10n.sortOrder,
-                        description: l10n.playlistsRowSortOrderDescription,
-                        icon: Icons.swap_vert,
-                        labelOf: (v) => v == SortDirection.ascending
-                            ? l10n.ascending
-                            : l10n.descending,
-                        onChanged: _onPlaylistsSortChanged,
-                      ),
-                      SwitchPreferenceTile(
-                        preference: UserPreferences.playlistsRowShowEpisodes,
-                        title: l10n.playlistsRowShowEpisodes,
-                        subtitle: l10n.playlistsRowShowEpisodesSubtitle,
-                        icon: Icons.video_library_outlined,
-                        onChanged: _onPlaylistsEpisodesChanged,
-                      ),
-                    ],
+                    EnumPreferenceTile<SortDirection>(
+                      preference: UserPreferences.playlistsRowSortOrder,
+                      title: l10n.sortOrder,
+                      description: l10n.playlistsRowSortOrderDescription,
+                      icon: Icons.swap_vert,
+                      labelOf: (v) => v == SortDirection.ascending
+                          ? l10n.ascending
+                          : l10n.descending,
+                      onChanged: _onPlaylistsSortChanged,
+                    ),
+                    SwitchPreferenceTile(
+                      preference: UserPreferences.playlistsRowShowEpisodes,
+                      title: l10n.playlistsRowShowEpisodes,
+                      subtitle: l10n.playlistsRowShowEpisodesSubtitle,
+                      icon: Icons.video_library_outlined,
+                      onChanged: _onPlaylistsEpisodesChanged,
+                    ),
                   ],
-                ),
-              ],
+                ],
+              ),
 
-              _SectionHeader(l10n.settingsRewatchSection),
+              _SectionHeader('REWATCH'),
               adaptiveListSection(
                 children: [
                   SwitchPreferenceTile(
@@ -703,60 +620,48 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
                 ],
               ),
 
-              _SectionHeader(l10n.sinceYouWatched),
+              _SectionHeader('SINCE YOU WATCHED'),
               adaptiveListSection(
                 children: [
                   SwitchPreferenceTile(
                     preference: UserPreferences.displaySinceYouWatchedRows,
-                    title: l10n.displaySinceYouWatchedRows,
-                    subtitle: l10n.displaySinceYouWatchedRowsSubtitle,
+                    title: 'Display Since You Watched Rows',
+                    subtitle: 'Show and customize Since You Watched rows in Home Sections.',
                     icon: Icons.recommend,
                     onChanged: _onSinceYouWatchedRowsToggleChanged,
                   ),
                   if (showSinceYouWatchedRows) ...[
                     EnumPreferenceTile<SinceYouWatchedSource>(
                       preference: UserPreferences.sinceYouWatchedSource,
-                      title: l10n.sinceYouWatchedSource,
-                      description: l10n.sinceYouWatchedSourceDescription,
+                      title: 'Recommendation Source',
+                      description: "Choose recommendation source (SpeshTV Recommends custom local algorithm, Jellyfin Recommends server engine, or TMDb's similarity metrics. Note: Online recommendations require Seerr integration).",
                       icon: Icons.source,
                       values: SinceYouWatchedSource.values,
-                      labelOf: (v) => switch (v) {
-                        SinceYouWatchedSource.local => l10n.sinceYouWatchedSourceLocal,
-                        SinceYouWatchedSource.server => l10n.sinceYouWatchedSourceServer,
-                        SinceYouWatchedSource.online => l10n.sinceYouWatchedSourceOnline,
-                      },
+                      labelOf: (v) => v.displayName,
                       onChanged: _onSinceYouWatchedConfigChanged,
                     ),
                     EnumPreferenceTile<SinceYouWatchedSourceType>(
                       preference: UserPreferences.sinceYouWatchedSourceType,
-                      title: l10n.sinceYouWatchedSourceType,
-                      description: l10n.sinceYouWatchedSourceTypeDescription,
+                      title: 'Source Type',
+                      description: 'Choose type of items to recommend',
                       icon: Icons.merge_type,
                       values: SinceYouWatchedSourceType.values,
-                      labelOf: (v) => switch (v) {
-                        SinceYouWatchedSourceType.movies => l10n.movies,
-                        SinceYouWatchedSourceType.shows => l10n.tvShows,
-                        SinceYouWatchedSourceType.both => l10n.settingsBoth,
-                      },
+                      labelOf: (v) => v.displayName,
                       onChanged: _onSinceYouWatchedConfigChanged,
                     ),
                     EnumPreferenceTile<SinceYouWatchedSourceItem>(
                       preference: UserPreferences.sinceYouWatchedSourceItem,
-                      title: l10n.sinceYouWatchedSourceItem,
-                      description: l10n.sinceYouWatchedSourceItemDescription,
+                      title: 'Source Item',
+                      description: 'Choose which source item to base recommendations on',
                       icon: Icons.play_circle_filled,
                       values: SinceYouWatchedSourceItem.values,
-                      labelOf: (v) => switch (v) {
-                        SinceYouWatchedSourceItem.recentlyWatched => l10n.sinceYouWatchedRecentlyWatched,
-                        SinceYouWatchedSourceItem.favorites => l10n.favorites,
-                        SinceYouWatchedSourceItem.random => l10n.mediaBarSourceRandom,
-                      },
+                      labelOf: (v) => v.displayName,
                       onChanged: _onSinceYouWatchedConfigChanged,
                     ),
                     EnumPreferenceTile<SinceYouWatchedNumRows>(
                       preference: UserPreferences.sinceYouWatchedNumRows,
-                      title: l10n.sinceYouWatchedNumRows,
-                      description: l10n.sinceYouWatchedNumRowsDescription,
+                      title: 'Number of Rows to Add',
+                      description: 'Choose how many Since You Watched rows to display (1-5)',
                       icon: Icons.format_list_numbered,
                       values: SinceYouWatchedNumRows.values,
                       labelOf: (v) => v.displayName,
@@ -765,15 +670,15 @@ class _HomeRowTogglesScreenState extends State<HomeRowTogglesScreen> {
                     if (sinceYouWatchedSource != SinceYouWatchedSource.online)
                       SwitchPreferenceTile(
                         preference: UserPreferences.sinceYouWatchedIncludeWatched,
-                        title: l10n.sinceYouWatchedIncludeWatched,
-                        subtitle: l10n.sinceYouWatchedIncludeWatchedSubtitle,
+                        title: 'Include Previously Watched',
+                        subtitle: 'Include watched items in recommendations',
                         icon: Icons.history,
                         onChanged: _onSinceYouWatchedConfigChanged,
                       ),
                   ],
                 ],
               ),
-              _SectionHeader(l10n.studios),
+              _SectionHeader('STUDIOS'),
               adaptiveListSection(
                 children: [
                   SwitchPreferenceTile(

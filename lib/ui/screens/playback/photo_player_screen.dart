@@ -4,19 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:moonfin_design/moonfin_design.dart';
-import 'package:playback_core/playback_core.dart';
 import 'package:server_core/server_core.dart';
 
 import '../../../data/models/aggregated_item.dart';
-import '../../../data/services/media_server_client_factory.dart';
 import '../../../l10n/app_localizations.dart';
-import '../../../util/image_fetch_priority.dart';
 import '../../../util/system_ui.dart';
-import '../../navigation/destinations.dart';
-import '../../navigation/playback_launcher.dart';
 import '../../widgets/adaptive/sf_symbol.dart';
 import '../../widgets/offline_aware_image.dart';
-import 'photo_slideshow_scheduler.dart';
 
 class PhotoPlayerScreen extends StatefulWidget {
   final String itemId;
@@ -34,21 +28,12 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
 
   List<AggregatedItem> _items = [];
   int _currentIndex = 0;
+  bool _isPlaying = false;
   bool _controlsVisible = true;
+  Timer? _slideshowTimer;
   Timer? _hideTimer;
-  int _pointerCount = 0;
-  Offset _swipeStart = Offset.zero;
-  Offset _swipeLast = Offset.zero;
-  bool _swipeIgnored = false;
 
-  static const _swipeMinDistance = 50.0;
   static const _slideshowInterval = Duration(seconds: 5);
-  static const _photoTransition = Duration(milliseconds: 400);
-
-  late final _slideshow = PhotoSlideshowScheduler(
-    interval: _slideshowInterval,
-    onAdvance: _next,
-  );
 
   @override
   void initState() {
@@ -60,7 +45,7 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
 
   @override
   void dispose() {
-    _slideshow.dispose();
+    _slideshowTimer?.cancel();
     _hideTimer?.cancel();
     _transformController.dispose();
     super.dispose();
@@ -78,7 +63,7 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
       if (parentId != null) {
         final siblings = await _client.itemsApi.getItems(
           parentId: parentId,
-          includeItemTypes: ['Photo', 'Video'],
+          includeItemTypes: ['Photo'],
           sortBy: 'SortName',
           sortOrder: 'Ascending',
           limit: 500,
@@ -95,22 +80,16 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
             )
             .toList();
         final idx = items.indexWhere((i) => i.id == widget.itemId);
-        // The album list is capped, so a photo past the cap is added to the
-        // end, where its name sorts, rather than opening on the first one.
-        if (idx < 0) items.add(item);
-        if (!mounted) return;
         setState(() {
           _items = items;
-          _currentIndex = idx >= 0 ? idx : items.length - 1;
+          _currentIndex = idx >= 0 ? idx : 0;
         });
       } else {
-        if (!mounted) return;
         setState(() {
           _items = [item];
           _currentIndex = 0;
         });
       }
-      _onPhotoShown();
     } catch (_) {}
   }
 
@@ -124,49 +103,8 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
 
   void _goTo(int index) {
     if (index < 0 || index >= _items.length) return;
-    // A swipe still in progress belongs to the photo it started on.
-    if (_pointerCount > 0) _swipeIgnored = true;
     _transformController.value = Matrix4.identity();
     setState(() => _currentIndex = index);
-    _onPhotoShown();
-  }
-
-  /// Completes once the photo at [index] has loaded (or failed to), using
-  /// the same provider [_buildPhotoView] paints, so it shares that load
-  /// rather than fetching the photo a second time.
-  Future<void> _photoReady(
-    int index, {
-    ImageFetchPriority priority = ImageFetchPriority.normal,
-  }) {
-    if (!mounted || index < 0 || index >= _items.length) {
-      return Future.value();
-    }
-    final url = _getImageUrl(_items[index]);
-    if (url == null) return Future.value();
-    return precacheImage(
-      ArtworkDecode.provider(url, headers: artworkFetchHeaders(url, priority)),
-      context,
-      onError: (_, _) {},
-    );
-  }
-
-  /// Completes once the current photo has loaded and the crossfade to it has
-  /// finished.
-  Future<void> _currentPhotoShown([Future<void>? ready]) => Future.wait([
-    ready ?? _photoReady(_currentIndex),
-    Future<void>.delayed(_photoTransition),
-  ]);
-
-  /// Restarts the slideshow countdown for the current photo, then preloads
-  /// the next one so it's ready when its turn comes.
-  void _onPhotoShown() {
-    final ready = _photoReady(_currentIndex);
-    _slideshow.photoChanged(_currentPhotoShown(ready));
-    if (_items.length < 2) return;
-    final nextIndex = (_currentIndex + 1) % _items.length;
-    ready.whenComplete(() {
-      if (mounted) _photoReady(nextIndex, priority: ImageFetchPriority.low);
-    });
   }
 
   void _next() {
@@ -185,93 +123,13 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
     }
   }
 
-  bool _isVideo(AggregatedItem item) => item.type == 'Video';
-
-  Future<void> _playVideo(AggregatedItem item) async {
-    if (_slideshow.isRunning) {
-      _slideshow.stop();
-      setState(() {});
-    }
-    final manager = GetIt.instance<PlaybackManager>();
-    try {
-      await launchPlayerWhilePreparing(
-        context,
-        manager: manager,
-        destination: Destinations.videoPlayer,
-        startPlayback: (session) async {
-          final data = await _client.itemsApi.getItem(item.id);
-          final full = AggregatedItem(
-            id: data['Id']?.toString() ?? item.id,
-            serverId: GetIt.instance<MediaServerClientFactory>().serverIdOf(
-              _client,
-            ),
-            rawData: data,
-          );
-          await runPlaybackStart(session, () => manager.playItems([full]));
-          return true;
-        },
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppLocalizations.of(context).failedToPlayChannel(item.name),
-          ),
-        ),
-      );
-    }
-  }
-
-  /// A swipe is one finger down, moved and lifted, on a photo that isn't
-  /// zoomed in. Raw pointers are tracked rather than the viewer's scale
-  /// callbacks, which only start once the finger has already moved and would
-  /// also report a trackpad scroll.
-  void _onPointerDown(PointerDownEvent e) {
-    if (_pointerCount == 0) {
-      _swipeStart = e.position;
-      _swipeLast = e.position;
-      _swipeIgnored = _transformController.value.getMaxScaleOnAxis() > 1.01;
-    }
-    _pointerCount++;
-    if (_pointerCount > 1) _swipeIgnored = true;
-  }
-
-  void _onPointerMove(PointerMoveEvent e) => _swipeLast = e.position;
-
-  void _onPointerUp(PointerUpEvent e) {
-    _swipeLast = e.position;
-    _onPointerDone(swipe: true);
-  }
-
-  void _onPointerCancel(PointerCancelEvent e) => _onPointerDone(swipe: false);
-
-  void _onPointerDone({required bool swipe}) {
-    if (_pointerCount > 0) _pointerCount--;
-    if (_pointerCount > 0) return;
-    final ignored = _swipeIgnored;
-    _swipeIgnored = false;
-    if (!swipe || ignored || _items.length < 2) return;
-    final delta = _swipeLast - _swipeStart;
-    if (delta.dx.abs() < _swipeMinDistance ||
-        delta.dx.abs() < delta.dy.abs() * 1.5) {
-      return;
-    }
-    _showControlsTemporarily();
-    if (delta.dx < 0) {
-      _next();
-    } else {
-      _previous();
-    }
-  }
-
   void _toggleSlideshow() {
-    if (_slideshow.isRunning) {
-      _slideshow.stop();
+    setState(() => _isPlaying = !_isPlaying);
+    if (_isPlaying) {
+      _slideshowTimer = Timer.periodic(_slideshowInterval, (_) => _next());
     } else {
-      _slideshow.start(_currentPhotoShown());
+      _slideshowTimer?.cancel();
     }
-    setState(() {});
   }
 
   void _showControlsTemporarily() {
@@ -299,34 +157,14 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColorScheme.background,
-      body: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: _onPointerDown,
-        onPointerMove: _onPointerMove,
-        onPointerUp: _onPointerUp,
-        onPointerCancel: _onPointerCancel,
-        child: GestureDetector(
-          onTap: _toggleControls,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              _buildPhotoView(),
-              if (_items.isNotEmpty && _isVideo(_items[_currentIndex]))
-                Center(
-                  child: IconButton(
-                    iconSize: 72,
-                    tooltip: AppLocalizations.of(context).play,
-                    icon: AdaptiveIcon(
-                      Icons.play_circle_fill,
-                      color: AppColorScheme.onSurface,
-                      size: 72,
-                    ),
-                    onPressed: () => _playVideo(_items[_currentIndex]),
-                  ),
-                ),
-              if (_controlsVisible) _buildOverlay(context),
-            ],
-          ),
+      body: GestureDetector(
+        onTap: _toggleControls,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _buildPhotoView(),
+            if (_controlsVisible) _buildOverlay(context),
+          ],
         ),
       ),
     );
@@ -352,7 +190,7 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
     }
 
     return AnimatedSwitcher(
-      duration: _photoTransition,
+      duration: const Duration(milliseconds: 400),
       child: InteractiveViewer(
         key: ValueKey(item.id),
         transformationController: _transformController,
@@ -471,7 +309,7 @@ class _PhotoPlayerScreenState extends State<PhotoPlayerScreen>
                 const SizedBox(width: 24),
                 IconButton(
                   icon: AdaptiveIcon(
-                    _slideshow.isRunning ? Icons.pause : Icons.play_arrow,
+                    _isPlaying ? Icons.pause : Icons.play_arrow,
                     color: AppColorScheme.onSurface,
                     size: 40,
                   ),

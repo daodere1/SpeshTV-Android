@@ -13,18 +13,25 @@ import '../../../data/services/youtube_stream_resolver.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../playback/appletv_preview_player.dart';
 import '../../../playback/mpv_client_certificate.dart';
-import '../../../playback/mpv_player_registry.dart';
 import '../../../preference/user_preferences.dart';
 import '../../../util/platform_detection.dart';
+import '../../../util/detail_trailer.dart';
 import '../../screensaver/screensaver_controller.dart';
 import '../../widgets/adaptive/sf_symbol.dart';
 import '../../widgets/web_youtube_trailer.dart';
+import '../../widgets/windows_youtube_trailer.dart';
 
 class TrailerPlayerScreen extends StatefulWidget {
   final String? videoId;
   final String? trailerUrl;
+  final bool retryAlternative;
 
-  const TrailerPlayerScreen({super.key, this.videoId, this.trailerUrl});
+  const TrailerPlayerScreen({
+    super.key,
+    this.videoId,
+    this.trailerUrl,
+    this.retryAlternative = false,
+  });
 
   @override
   State<TrailerPlayerScreen> createState() => _TrailerPlayerScreenState();
@@ -35,9 +42,15 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
   static const _resolveTimeout = Duration(seconds: 10);
 
   Player? _player;
+  Timer? _startupTimer;
+  StreamSubscription<Duration>? _startupPositionSub;
   VideoController? _controller;
   AppleTvPreviewPlayer? _appleTvPlayer;
   StreamSubscription<void>? _appleTvCompletedSub;
+  StreamSubscription<bool>? _completedSub;
+  StreamSubscription<String>? _errorSub;
+  bool _closing = false;
+  bool _youtubeFallbackAttempted = false;
   StreamSubscription<Duration>? _sponsorBlockPositionSub;
   final _sponsorBlockService = SponsorBlockService();
   final _sponsorBlockSession = SponsorBlockSkipSession();
@@ -54,8 +67,7 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
   );
 
   bool get _supportsEmbeddedYouTubePlatform {
-    return PlatformDetection.isAndroid ||
-        PlatformDetection.isIOS ||
+    return PlatformDetection.isWindows || PlatformDetection.isIOS ||
         PlatformDetection.isMacOS;
   }
 
@@ -112,16 +124,81 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
       unawaited(_openTrailerAppleTv());
       return;
     }
-    _player ??= MpvPlayerRegistry.instance.create(
-      configuration: const PlayerConfiguration(libass: false),
-    );
+    _startupTimer?.cancel();
+    _startupTimer = Timer(const Duration(seconds: 25), () {
+      if (mounted && !_closing) {
+        _failTrailer(AppLocalizations.of(context).trailerTimedOut);
+      }
+    });
+    _player ??= Player(configuration: const PlayerConfiguration(libass: false));
+    _startupPositionSub ??= _player!.stream.position.listen((position) {
+      if (position > Duration.zero) _startupTimer?.cancel();
+    });
     _controller ??= VideoController(
       _player!,
       configuration: VideoControllerConfiguration(
         hwdec: PlatformDetection.isLinux ? 'auto-safe' : null,
       ),
     );
+    _completedSub ??= _player!.stream.completed.listen((completed) {
+      if (completed && mounted && !_closing) {
+        _closing = true;
+        Navigator.of(context).pop(true);
+      }
+    });
+    _errorSub ??= _player!.stream.error.listen((_) {
+      if (mounted) {
+        _failTrailer(AppLocalizations.of(context).playbackFailedForTrailer);
+      }
+    });
     unawaited(_openTrailer());
+  }
+
+  void _failTrailer(String message) {
+    if (!mounted || _closing) return;
+    _startupTimer?.cancel();
+    setState(() { _loading = false; _error = message; });
+    final videoId = _resolvedVideoId();
+    if (!_youtubeFallbackAttempted && canAutoFallbackToYouTube() && videoId != null &&
+        youtubeTrailerId('https://www.youtube.com/watch?v=$videoId') != null) {
+      _closing = true;
+      _youtubeFallbackAttempted = true;
+      unawaited(_launchYouTubeFallback(videoId, message));
+      return;
+    }
+    _showTrailerFailure(message);
+  }
+
+  Future<void> _launchYouTubeFallback(String videoId, String message) async {
+    _clearSponsorBlockTracking();
+    try {
+      await _player?.stop().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    if (!mounted) return;
+    final opened = await launchTrailerExternally(
+      'https://www.youtube.com/watch?v=$videoId',
+    );
+    if (!mounted) return;
+    if (opened) {
+      // Mark this attempt handled so Seerr does not launch another candidate.
+      Navigator.of(context).pop(true);
+    } else {
+      _closing = false;
+      _showTrailerFailure(message);
+    }
+  }
+
+  void _showTrailerFailure(String message) {
+    if (!mounted) return;
+    if (widget.retryAlternative) {
+      _closing = true;
+      Navigator.of(context).pop(false);
+    } else {
+      setState(() {
+        _loading = false;
+        _error = message;
+      });
+    }
   }
 
   void _onEmbeddedPlaybackStarted() {
@@ -132,7 +209,20 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
   }
 
   void _fallBackToStreamPlayback() {
-    if (!mounted || _embedFallbackTriggered || !_useEmbeddedYouTube) {
+    if (_embedFallbackTriggered || !_useEmbeddedYouTube) {
+      return;
+    }
+    if (PlatformDetection.isAndroid || PlatformDetection.isWindows) {
+      _embedFallbackTriggered = true;
+      _failTrailer(AppLocalizations.of(context).playbackFailedForTrailer);
+      return;
+    }
+    // AVFoundation cannot decode what the resolver pulls out of YouTube, so
+    // on Apple the embed is the only thing that can play this. Leave it up for
+    // the viewer to start rather than falling back to a stream path with
+    // nothing behind it.
+    if (PlatformDetection.useApplePreviewPlayer) {
+      if (_loading) setState(() => _loading = false);
       return;
     }
     _embedFallbackTriggered = true;
@@ -146,15 +236,16 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
 
   @override
   void dispose() {
+    _startupTimer?.cancel();
+    _startupPositionSub?.cancel();
     _screensaverController.setPlaybackActive(false);
     _sponsorBlockPositionSub?.cancel();
     _appleTvCompletedSub?.cancel();
+    _completedSub?.cancel();
+    _errorSub?.cancel();
     unawaited(_appleTvPlayer?.dispose());
-    final player = _player;
-    if (player != null) {
-      unawaited(player.stop());
-      unawaited(MpvPlayerRegistry.instance.dispose(player));
-    }
+    _player?.stop();
+    _player?.dispose();
     super.dispose();
   }
 
@@ -176,13 +267,16 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
       sponsorBlockVideoId = widget.videoId;
       final stream = await YouTubeStreamResolver.resolve(
         widget.videoId!,
+        maxHeight: PlatformDetection.isAndroid ? 360 : null,
       ).timeout(_resolveTimeout, onTimeout: () => null);
       streamUrl = stream?.url;
       audioLanguage = stream?.audioLanguage;
       if (streamUrl != null && streamUrl.isNotEmpty) {
         useYouTubeHeaders = true;
       } else {
-        streamUrl = 'https://www.youtube.com/watch?v=${widget.videoId!}';
+        streamUrl = unresolvedTrailerPlaybackUrl(
+          'https://www.youtube.com/watch?v=${widget.videoId!}',
+        );
         useYouTubeHeaders = false;
       }
     } else if (widget.trailerUrl != null && widget.trailerUrl!.isNotEmpty) {
@@ -191,13 +285,14 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
       sponsorBlockVideoId = youtubeVideoId;
       final stream = await YouTubeStreamResolver.resolveFromUrl(
         trailerUrl,
+        maxHeight: PlatformDetection.isAndroid ? 360 : null,
       ).timeout(_resolveTimeout, onTimeout: () => null);
       streamUrl = stream?.url;
       audioLanguage = stream?.audioLanguage;
       if (streamUrl != null && streamUrl.isNotEmpty) {
         useYouTubeHeaders = youtubeVideoId != null;
       } else {
-        streamUrl = trailerUrl;
+        streamUrl = unresolvedTrailerPlaybackUrl(trailerUrl);
         useYouTubeHeaders = false;
       }
     }
@@ -267,53 +362,37 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
   }
 
   Future<void> _openTrailer() async {
-    final resolved = await _resolveStreamUrl();
-    final streamUrl = resolved.streamUrl;
-    final sponsorBlockVideoId = resolved.sponsorBlockVideoId;
-    final useYouTubeHeaders = resolved.useYouTubeHeaders;
-
-    if (!mounted) return;
-
-    if (streamUrl == null || streamUrl.isEmpty) {
-      final l10n = AppLocalizations.of(context);
-      setState(() {
-        _loading = false;
-        _error = l10n.unableToLoadTrailerStream;
-      });
-      return;
-    }
-
     try {
+      final resolved = await _resolveStreamUrl();
+      final streamUrl = resolved.streamUrl;
+      final sponsorBlockVideoId = resolved.sponsorBlockVideoId;
+      final useYouTubeHeaders = resolved.useYouTubeHeaders;
+
+      if (!mounted || _closing) return;
+
+      if (streamUrl == null || streamUrl.isEmpty) {
+        final l10n = AppLocalizations.of(context);
+        _failTrailer(l10n.unableToLoadTrailerStream);
+        return;
+      }
+
+      final media = useYouTubeHeaders
+          ? Media(streamUrl, httpHeaders: YouTubeStreamResolver.youtubeHeaders)
+          : Media(streamUrl);
       await YouTubeStreamResolver.preferAudioLanguage(
         _player!,
         resolved.audioLanguage,
-      );
-      // A single variant has none of the master's caption tracks, so captions
-      // keep the full master.
-      final media = _showCaptions
-          ? Media(
-              streamUrl,
-              httpHeaders: useYouTubeHeaders
-                  ? YouTubeStreamResolver.youtubeHeaders
-                  : null,
-            )
-          : await YouTubeStreamResolver.previewMedia(
-              _player!,
-              streamUrl,
-              youTube: useYouTubeHeaders,
-              audioLanguage: resolved.audioLanguage,
-            );
-      if (!mounted) return;
+      ).timeout(const Duration(seconds: 3));
       await YouTubeStreamResolver.showCaptions(
         _player!,
         _showCaptions,
         language: GetIt.instance<UserPreferences>().get(
           UserPreferences.defaultSubtitleLanguage,
         ),
-      );
+      ).timeout(const Duration(seconds: 3));
       await applyMpvClientCertificate(_player!, streamUrl);
       await _player!.open(media).timeout(_openTimeout);
-      if (!mounted) return;
+      if (!mounted || _closing) return;
       setState(() {
         _loading = false;
       });
@@ -326,17 +405,11 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
     } on TimeoutException {
       if (!mounted) return;
       final l10n = AppLocalizations.of(context);
-      setState(() {
-        _loading = false;
-        _error = l10n.trailerTimedOut;
-      });
+      _failTrailer(l10n.trailerTimedOut);
     } catch (_) {
       if (!mounted) return;
       final l10n = AppLocalizations.of(context);
-      setState(() {
-        _loading = false;
-        _error = l10n.playbackFailedForTrailer;
-      });
+      _failTrailer(l10n.playbackFailedForTrailer);
     }
   }
 
@@ -413,19 +486,39 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
                   ? Center(
                       child: AspectRatio(
                         aspectRatio: 16 / 9,
-                        child: WebYouTubeTrailer(
+                        child: PlatformDetection.isWindows
+                            ? WindowsYouTubeTrailer(
+                                videoId: _webVideoId!,
+                                onReady: _onEmbeddedPlaybackStarted,
+                                onCompleted: () {
+                                  if (mounted && !_closing) {
+                                    _closing = true;
+                                    Navigator.of(context).pop(true);
+                                  }
+                                },
+                                onUnavailable: _fallBackToStreamPlayback,
+                              )
+                            : WebYouTubeTrailer(
                           videoId: _webVideoId!,
+                          suspended: _error != null,
                           muted: false,
                           showCaptions: _showCaptions,
                           loop: false,
+                          showControls: true,
+                          autoplayTimeout: const Duration(seconds: 15),
                           onPlaybackStarted: _onEmbeddedPlaybackStarted,
+                          onCompleted: () {
+                            if (mounted && !_closing) {
+                              _closing = true;
+                              Navigator.of(context).pop(true);
+                            }
+                          },
                           onEmbeddedUnavailable: _useEmbeddedYouTube
                               ? _fallBackToStreamPlayback
                               : null,
                           onAutoplayFailed: _useEmbeddedYouTube
                               ? _fallBackToStreamPlayback
                               : null,
-                          autoplayTimeout: const Duration(seconds: 7),
                         ),
                       ),
                     )
@@ -459,10 +552,31 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    if (_resolvedVideoId() != null) ...[
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Open in YouTube'),
+                        onPressed: () async {
+                          final opened = await launchTrailerExternally(
+                            'https://www.youtube.com/watch?v=${_resolvedVideoId()}',
+                          );
+                          if (opened && mounted && context.mounted && !_closing) {
+                            _closing = true;
+                            Navigator.of(context).pop();
+                          }
+                        },
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
@@ -472,8 +586,12 @@ class _TrailerPlayerScreenState extends State<TrailerPlayerScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: IconButton(
-                  icon: const AdaptiveIcon(Icons.arrow_back, color: Colors.white),
+                  icon: const AdaptiveIcon(
+                    Icons.arrow_back,
+                    color: Colors.white,
+                  ),
                   onPressed: () {
+                    _closing = true;
                     _player?.stop();
                     unawaited(_appleTvPlayer?.stop());
                     Navigator.of(context).pop();

@@ -1,5 +1,3 @@
-import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -530,11 +528,8 @@ typedef AdminAnalyticsLibraryRef = ({String itemId, String? collectionType});
 /// a category lists its items without reading the library again.
 final adminLibraryItemsProvider =
     FutureProvider.family<List<AdminAnalyticsItem>, AdminAnalyticsLibraryRef>(
-  (ref, library) => _loadLibraryItems(
-    GetIt.instance<MediaServerClient>(),
-    library,
-    cancelled: _disposedFlag(ref),
-  ),
+  (ref, library) =>
+      _loadLibraryItems(GetIt.instance<MediaServerClient>(), library),
 );
 
 /// One item reduced to what the charts count.
@@ -810,7 +805,6 @@ class AdminAnalyticsQuery {
 final adminAnalyticsItemsProvider = FutureProvider.autoDispose
     .family<List<AdminAnalyticsItem>, AdminAnalyticsQuery>((ref, query) async {
   final client = GetIt.instance<MediaServerClient>();
-  final cancelled = _disposedFlag(ref);
   final libraries = (await ref.watch(adminLibrariesProvider.future)).where(
     (library) =>
         library.itemId.isNotEmpty &&
@@ -838,7 +832,6 @@ final adminAnalyticsItemsProvider = FutureProvider.autoDispose
       client,
       parentId: library.itemId,
       includeItemTypes: metric.includeItemTypes,
-      cancelled: cancelled,
     );
     return [
       for (final json in raw)
@@ -882,9 +875,8 @@ List<String>? _itemTypesForInsights(String? collectionType) {
 
 Future<List<AdminAnalyticsItem>> _loadLibraryItems(
   MediaServerClient client,
-  AdminAnalyticsLibraryRef library, {
-  required bool Function() cancelled,
-}) async {
+  AdminAnalyticsLibraryRef library,
+) async {
   final includeItemTypes = _itemTypesForInsights(library.collectionType);
   if (includeItemTypes == null) {
     return const [];
@@ -906,7 +898,6 @@ Future<List<AdminAnalyticsItem>> _loadLibraryItems(
     parentId: library.itemId,
     includeItemTypes: includeItemTypes,
     fields: fields,
-    cancelled: cancelled,
   );
   return [
     for (final json in raw)
@@ -914,81 +905,33 @@ Future<List<AdminAnalyticsItem>> _loadLibraryItems(
   ];
 }
 
-/// Item pages read at once across every library. Jellyfin only starts its
-/// answer once a whole page of MediaSources is built. With every library
-/// reading big pages together, that start slipped past the client's 8s
-/// connect timeout, which on web aborts the request.
-const _maxItemPages = 4;
-final _itemPages = _Slots(_maxItemPages);
-
-/// True once [ref] is disposed, as when a reload invalidates it, so its reads
-/// stop taking page slots the fresh reads need.
-bool Function() _disposedFlag(Ref ref) {
-  var disposed = false;
-  ref.onDispose(() => disposed = true);
-  return () => disposed;
-}
-
-/// Runs tasks with at most [_free] of them in flight, the rest in order.
-class _Slots {
-  _Slots(this._free);
-
-  int _free;
-  final _waiting = Queue<Completer<void>>();
-
-  Future<T> run<T>(Future<T> Function() task) async {
-    if (_free > 0) {
-      _free--;
-    } else {
-      final turn = Completer<void>();
-      _waiting.add(turn);
-      await turn.future;
-    }
-    try {
-      return await task();
-    } finally {
-      if (_waiting.isEmpty) {
-        _free++;
-      } else {
-        _waiting.removeFirst().complete();
-      }
-    }
-  }
-}
-
 /// Every matching item, the first page alone to learn the total and the rest
-/// in batches behind the shared page limit.
+/// a few at a time.
 Future<List<Map<String, dynamic>>> _fetchAllItems(
   MediaServerClient client, {
   required String parentId,
   required List<String> includeItemTypes,
-  required bool Function() cancelled,
   String? fields,
 }) async {
-  const pageSize = 300;
+  const pageSize = 1000;
+  const parallelPages = 4;
 
-  // Checked once a page has its slot, so a read invalidated while its pages
-  // wait in line drops them instead of running them ahead of the fresh read.
-  Future<Map<String, dynamic>> page(int startIndex) => _itemPages.run(() {
-    if (cancelled()) {
-      throw StateError('Library read was invalidated');
-    }
-    // GET /Items takes the user from the token, /Users/{id}/Items is obsolete.
-    return client.itemsApi.getItems(
-      serverWide: true,
-      parentId: parentId,
-      includeItemTypes: includeItemTypes,
-      recursive: true,
-      fields: fields,
-      sortBy: 'SortName',
-      sortOrder: 'Ascending',
-      startIndex: startIndex,
-      limit: pageSize,
-      enableTotalRecordCount: true,
-      enableImageTypes: 'Primary',
-      imageTypeLimit: 1,
-    );
-  });
+  Future<Map<String, dynamic>> page(int startIndex) =>
+      // GET /Items takes the user from the token, /Users/{id}/Items is obsolete.
+      client.itemsApi.getItems(
+        serverWide: true,
+        parentId: parentId,
+        includeItemTypes: includeItemTypes,
+        recursive: true,
+        fields: fields,
+        sortBy: 'SortName',
+        sortOrder: 'Ascending',
+        startIndex: startIndex,
+        limit: pageSize,
+        enableTotalRecordCount: true,
+        enableImageTypes: 'Primary',
+        imageTypeLimit: 1,
+      );
 
   final first = await page(0);
   final items = _mapList(first['Items']);
@@ -1002,11 +945,9 @@ Future<List<Map<String, dynamic>>> _fetchAllItems(
   final starts = [
     for (var start = pageSize; start < total; start += pageSize) start,
   ];
-  // A batch at a time, so a failed read stops the library instead of leaving
-  // the rest of its pages queued in the shared slots.
-  for (var i = 0; i < starts.length; i += _maxItemPages) {
+  for (var i = 0; i < starts.length; i += parallelPages) {
     final pages = await Future.wait(
-      starts.skip(i).take(_maxItemPages).map(page),
+      starts.skip(i).take(parallelPages).map(page),
     );
     for (final response in pages) {
       items.addAll(_mapList(response['Items']));

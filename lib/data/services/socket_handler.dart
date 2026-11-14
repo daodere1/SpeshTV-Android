@@ -2,19 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:dio/dio.dart' show DioException;
-import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
-import 'package:server_silo/server_silo.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:server_core/server_core.dart';
 
-import '../../auth/services/silo_token_storage.dart';
 import 'log_service.dart';
 import 'websocket_message_parser.dart';
-
-part 'silo_events_socket_client.dart';
 
 abstract class ServerWebSocketClient {
   Stream<ServerWebSocketMessage> get messages;
@@ -37,7 +31,6 @@ abstract class ServerWebSocketClient {
       ServerType.jellyfin => JellyfinWebSocketClient(client),
       ServerType.emby => EmbyWebSocketClient(client),
       ServerType.plex => PlexWebSocketClient(client),
-      ServerType.silo => SiloEventsSocketClient(client),
     };
   }
 }
@@ -76,10 +69,6 @@ abstract class _ReconnectingWebSocketClient implements ServerWebSocketClient {
   bool _disposed = false;
   bool _connecting = false;
 
-  /// Counts [disconnect] calls, so a connect that was still opening can tell
-  /// it was called off.
-  int _disconnects = 0;
-
   final _messageController =
       StreamController<ServerWebSocketMessage>.broadcast();
   final _connectionController = StreamController<void>.broadcast();
@@ -93,23 +82,12 @@ abstract class _ReconnectingWebSocketClient implements ServerWebSocketClient {
   /// The url to open, or null when the client has nothing to connect with.
   Uri? buildUri();
 
-  /// Opens the socket, or answers null when there is nothing to connect with.
-  /// Jellyfin and Emby open [buildUri]. Silo first asks for a ticket.
-  Future<WebSocketChannel?> openChannel() async {
-    final uri = buildUri();
-    return uri == null ? null : WebSocketChannel.connect(uri);
-  }
-
   /// What to do with each frame the server sends.
   void handleMessage(dynamic data);
 
   /// Called once the socket is open, for the types that start their keep alive
   /// straight away rather than waiting to be told an interval.
   void onConnected() {}
-
-  /// Called when the server closes the socket, with its close code. True
-  /// reconnects at once instead of after the backoff (Silo's access change).
-  bool onServerClosed(int? closeCode) => false;
 
   @override
   Future<void> connect() async {
@@ -119,15 +97,10 @@ abstract class _ReconnectingWebSocketClient implements ServerWebSocketClient {
       await disconnect();
       if (_disposed) return;
 
-      final opening = _disconnects;
-      final socket = await openChannel();
-      if (socket == null) return;
-      // Opening can take a request first (Silo's ticket). A disconnect or a
-      // dispose meanwhile wins, rather than this socket coming up after it.
-      if (_disposed || opening != _disconnects) {
-        unawaited(_closeQuietly(socket));
-        return;
-      }
+      final uri = buildUri();
+      if (uri == null) return;
+
+      final socket = WebSocketChannel.connect(uri);
       channel = socket;
       await socket.ready.timeout(_connectTimeout);
       _reconnectAttempt = 0;
@@ -142,9 +115,8 @@ abstract class _ReconnectingWebSocketClient implements ServerWebSocketClient {
           _dropAndReconnect();
         },
         onDone: () {
-          final atOnce = onServerClosed(socket.closeCode);
           logLifecycle('$label WebSocket closed, reconnecting');
-          _dropAndReconnect(atOnce: atOnce);
+          _dropAndReconnect();
         },
       );
     } catch (e) {
@@ -157,18 +129,12 @@ abstract class _ReconnectingWebSocketClient implements ServerWebSocketClient {
 
   /// Clearing the channel is what lets an immediate retry through, since a
   /// stale one left in place reads as a live connection.
-  void _dropAndReconnect({bool atOnce = false}) {
+  void _dropAndReconnect() {
     keepAliveTimer?.cancel();
     keepAliveTimer = null;
     final stale = channel;
     channel = null;
     unawaited(_closeQuietly(stale));
-    if (atOnce && !_disposed) {
-      _reconnectAttempt = 0;
-      _reconnectTimer?.cancel();
-      _reconnectTimer = Timer(Duration.zero, () => connect());
-      return;
-    }
     scheduleReconnect();
   }
 
@@ -241,7 +207,6 @@ abstract class _ReconnectingWebSocketClient implements ServerWebSocketClient {
 
   @override
   Future<void> disconnect() async {
-    _disconnects++;
     keepAliveTimer?.cancel();
     keepAliveTimer = null;
     _reconnectTimer?.cancel();

@@ -76,7 +76,7 @@ class _PlaybackCategoryScreen extends StatelessWidget {
                 children: [
                   _TvSettingsListTile(
                     leading: const Icon(Icons.groups),
-                    title: Text(l10n.watchParties),
+                    title: Text(l10n.syncPlay),
                     subtitle: Text(l10n.settingsSyncplaySubtitle),
                     onTap: () => context.pushSettingsScreen(
                       const _SyncPlaySettingsScreen(),
@@ -84,12 +84,11 @@ class _PlaybackCategoryScreen extends StatelessWidget {
                   ),
                 ],
               ),
-              if ((canToggleGameBackend && _gamesOnAnyServer) ||
-                  usesNativeGameBackend) ...[
+              if (canToggleGameBackend || usesNativeGameBackend) ...[
                 _SectionHeader(l10n.games),
                 adaptiveListSection(
                   children: [
-                    if (canToggleGameBackend && _gamesOnAnyServer)
+                    if (canToggleGameBackend)
                       SwitchPreferenceTile(
                         preference: UserPreferences.useNativeEmulator,
                         title: l10n.useNativeEmulator,
@@ -108,9 +107,7 @@ class _PlaybackCategoryScreen extends StatelessWidget {
                           GamePlaybackOrientation.auto => l10n.auto,
                         },
                       ),
-                    if (supportsCoreDownloads &&
-                        usesNativeGameBackend &&
-                        _gamesOnAnyServer)
+                    if (supportsCoreDownloads && usesNativeGameBackend)
                       _TvSettingsListTile(
                         leading: const Icon(Icons.videogame_asset),
                         title: Text(l10n.emulatorCores),
@@ -158,9 +155,3 @@ class _PlaybackCategoryScreen extends StatelessWidget {
     );
   }
 }
-
-/// Retro games come from the Moonfin plugin's game libraries, so the emulator
-/// switch and cores aren't offered when no signed-in server could have it
-/// (all Silo, say). Downloaded games stay manageable either way.
-bool get _gamesOnAnyServer =>
-    anySignedInServerSupports((f) => f.supportsRetroGames);

@@ -218,7 +218,6 @@ class UserConfiguration {
     List<String>? orderedViews,
     List<String>? myMediaExcludes,
     List<String>? latestItemsExcludes,
-    bool? hidePlayedInLatest,
     String? subtitleMode,
   }) {
     return UserConfiguration(
@@ -226,7 +225,7 @@ class UserConfiguration {
       latestItemsExcludes: latestItemsExcludes ?? this.latestItemsExcludes,
       myMediaExcludes: myMediaExcludes ?? this.myMediaExcludes,
       groupedFolders: groupedFolders,
-      hidePlayedInLatest: hidePlayedInLatest ?? this.hidePlayedInLatest,
+      hidePlayedInLatest: hidePlayedInLatest,
       enableNextEpisodeAutoPlay: enableNextEpisodeAutoPlay,
       playDefaultAudioTrack: playDefaultAudioTrack,
       rememberAudioSelections: rememberAudioSelections,

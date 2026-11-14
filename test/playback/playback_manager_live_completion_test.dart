@@ -6,7 +6,9 @@ import 'package:playback_core/playback_core.dart';
 
 /// A backend whose completion and error streams a test drives by hand, so the
 /// manager sees exactly the end-of-stream report a live source produces.
-class _TestBackend extends Fake implements PlayerBackend {
+class _TestBackend extends Fake implements PlayerBackend, VideoFrameProgressBackend {
+  @override
+  bool? videoFramesAdvancing;
   final _errors = StreamController<Map<String, dynamic>>.broadcast();
   final _completed = StreamController<bool>.broadcast();
   final _playing = StreamController<bool>.broadcast();
@@ -124,13 +126,16 @@ class _TestBackend extends Fake implements PlayerBackend {
     'message': 'Source error',
   });
 
-  /// A provider's refusal, as Media3 reports it for a geo-blocked channel.
-  void emitHttpStatusError(int status) => _errors.add(<String, dynamic>{
-    'event': 'error',
-    'errorCodeName': 'ERROR_CODE_IO_BAD_HTTP_STATUS',
-    'message': 'Source error',
-    'httpStatus': status,
-  });
+  void emitVideoFreeze() {
+    emitNotPlaying();
+    _errors.add({'event': 'playerError', 'kind': 'video_frame_stalled',
+      'message': 'video renderer stalled', 'recoverable': true});
+  }
+  void emitRepeatedBuffering() {
+    emitNotPlaying();
+    _errors.add({'event':'playerError','kind':'live_rebuffering',
+      'recoverable':true,'message':'repeated short buffering'});
+  }
 
   void emitLiveSourceReset() => _errors.add(<String, dynamic>{
     'event': 'playerError',
@@ -626,67 +631,60 @@ void main() {
       }
     });
 
-    test(
-      'a direct-played channel the provider refuses gives up at once',
-      () async {
-        final backend = _TestBackend();
-        final resolver = _TestResolver()
-          ..playMethod = StreamPlayMethod.directPlay;
-        final service = _TestService();
-        final clock = _Clock();
-        final manager = _manager(backend, resolver, service, clock);
-        try {
-          await manager.playItems(<dynamic>[_liveChannel]);
-
-          backend.emitHttpStatusError(403);
-          await _settle();
-
-          expect(backend.resumeLiveEdgeCalls, isZero);
-          expect(manager.bringupState.phase, PlaybackBringupPhase.failed);
-          expect(manager.bringupState.error, liveStreamLostError);
-        } finally {
-          manager.dispose();
-        }
-      },
-    );
-
-    test('a rate-limited direct-played channel still recovers', () async {
+    test('a frame freeze re-resolves even if the engine was playing without buffering', () async {
       final backend = _TestBackend();
-      final resolver = _TestResolver()..playMethod = StreamPlayMethod.directPlay;
+      final resolver = _TestResolver();
       final service = _TestService();
       final clock = _Clock();
       final manager = _manager(backend, resolver, service, clock);
       try {
         await manager.playItems(<dynamic>[_liveChannel]);
-
-        backend.emitHttpStatusError(429);
+        backend.emitPlaying();
+        backend.emitBuffering(false);
         await _settle();
-
-        expect(backend.resumeLiveEdgeCalls, 1);
+        final opens = backend.playedUrls.length;
+        backend.emitVideoFreeze();
+        await _settle();
+        expect(backend.resumeLiveEdgeCalls, 0);
+        expect(backend.playedUrls.length, greaterThan(opens));
+        expect(service.stoppedResolutions, isNotEmpty);
         expect(manager.bringupState.phase, isNot(PlaybackBringupPhase.failed));
-      } finally {
-        manager.dispose();
-      }
+      } finally { manager.dispose(); }
     });
 
-    test("a server-relayed channel's 404 still recovers", () async {
+    test('persistent short buffering rejoins the live edge using bounded recovery', () async {
       final backend = _TestBackend();
-      final resolver = _TestResolver()
-        ..playMethod = StreamPlayMethod.directStream;
+      final resolver = _TestResolver();
+      final service = _TestService();
+      final clock = _Clock();
+      final manager = _manager(backend,resolver,service,clock);
+      try {
+        await manager.playItems(<dynamic>[_liveChannel]);
+        final opens=backend.playedUrls.length;
+        backend.emitRepeatedBuffering();
+        await _settle();
+        expect(backend.playedUrls.length,greaterThan(opens));
+        expect(backend.resumeLiveEdgeCalls,0);
+      } finally {manager.dispose();}
+    });
+
+    test('a typed video freeze is not swallowed by generic-error suppression', () async {
+      final backend = _TestBackend();
+      final resolver = _TestResolver();
       final service = _TestService();
       final clock = _Clock();
       final manager = _manager(backend, resolver, service, clock);
       try {
         await manager.playItems(<dynamic>[_liveChannel]);
-
-        backend.emitHttpStatusError(404);
+        backend.emitLiveSourceReset();
         await _settle();
-
-        expect(backend.resumeLiveEdgeCalls, 1);
-        expect(manager.bringupState.phase, isNot(PlaybackBringupPhase.failed));
-      } finally {
-        manager.dispose();
-      }
+        final opens = backend.playedUrls.length;
+        clock.advance(const Duration(seconds: 11));
+        backend.emitVideoFreeze();
+        await _settle();
+        expect(backend.playedUrls.length, greaterThan(opens));
+        expect(backend.resumeLiveEdgeCalls, 0);
+      } finally { manager.dispose(); }
     });
 
     test('a VOD source error still fails the bringup', () async {
@@ -2381,6 +2379,25 @@ void main() {
         } finally {
           manager.dispose();
         }
+      });
+    });
+
+    test('playing flags cannot replenish recovery when actual video frames stopped', () {
+      fakeAsync((async) {
+        final backend = _TestBackend();
+        final resolver = _TestResolver();
+        final manager = fakeManager(backend, resolver, _TestService(), async);
+        try {
+          unawaited(manager.playItems(<dynamic>[_liveChannel]));
+          async.flushMicrotasks();
+          spendBudgetThenPlay(backend, async);
+          backend.videoFramesAdvancing = false;
+          async.elapse(const Duration(seconds: 25));
+          backend.emitVideoFreeze();
+          async.flushMicrotasks();
+          expect(backend.resumeLiveEdgeCalls, 1);
+          expect(manager.bringupState.phase, PlaybackBringupPhase.failed);
+        } finally { manager.dispose(); }
       });
     });
 

@@ -1,17 +1,110 @@
+import 'package:dio/dio.dart';
 import 'package:server_core/server_core.dart';
 
 import '../models/aggregated_item.dart';
+import '../models/search_source.dart';
 import '../utils/blocked_ratings.dart';
 
 class SearchRepository {
   final MediaServerClient _client;
+  final String _serverId;
 
   static const _searchFields =
       'Type,UserData,ProductionYear,SeriesName,ParentIndexNumber,IndexNumber,'
       'AlbumArtist,Album,ImageTags,BackdropImageTags,ParentBackdropItemId,'
-      'ParentBackdropImageTags,SeriesId,SeriesPrimaryImageTag,OfficialRating';
+      'ParentBackdropImageTags,SeriesId,SeriesPrimaryImageTag,ProviderIds,OfficialRating';
 
-  SearchRepository(this._client);
+  SearchRepository(this._client, {String serverId = ''}) : _serverId = serverId;
+
+  Future<Map<String, dynamic>>? _views;
+  String? _viewsUser;
+  DateTime _viewsExpires = DateTime.fromMillisecondsSinceEpoch(0);
+
+  Future<Map<String, dynamic>> _userLibraries() {
+    if (_viewsUser != _client.userId || DateTime.now().isAfter(_viewsExpires)) {
+      _views = null;
+      _viewsUser = _client.userId;
+      _viewsExpires = DateTime.now().add(const Duration(minutes: 2));
+    }
+    final existing = _views;
+    if (existing != null) return existing;
+    final request = _client.userViewsApi.getUserViews();
+    _views = request;
+    return request.catchError((Object error) {
+      if (identical(_views, request)) _views = null;
+      throw error;
+    });
+  }
+
+  Future<T> _retryTransient<T>(
+    Future<T> Function() request, {
+    required bool Function() isCurrent,
+  }) async {
+    try {
+      return await request();
+    } on DioException catch (error) {
+      final retryable = error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError ||
+          (error.type == DioExceptionType.badResponse &&
+              const [408, 502, 503, 504].contains(error.response?.statusCode));
+      if (!retryable || !isCurrent()) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      if (!isCurrent()) rethrow;
+      // One retry only; never retry authorization or malformed responses.
+      return request();
+    }
+  }
+
+  Future<List<AggregatedItem>> searchLibraries(
+    String query, {
+    required SearchSource source,
+    required bool Function() isCurrent,
+    required void Function(List<AggregatedItem>) onResults,
+  }) async {
+    final response = await _retryTransient(
+      _userLibraries, isCurrent: isCurrent);
+    if (!isCurrent()) return const [];
+    final libraries = (response['Items'] as List? ?? const [])
+        .whereType<Map>().where((view) {
+      if (view['Id'] == null || view['CollectionType'] == 'livetv') return false;
+      final vod = isVodLibrary(view['Name']?.toString() ?? '');
+      return source == SearchSource.all ||
+          (source == SearchSource.vod && vod) ||
+          (source == SearchSource.local && !vod);
+    }).toList();
+    libraries.sort((a, b) =>
+      (isVodLibrary(a['Name']?.toString() ?? '') ? 1 : 0).compareTo(
+        isVodLibrary(b['Name']?.toString() ?? '') ? 1 : 0));
+    var next = 0;
+    var failures = 0;
+    final results = <AggregatedItem>[];
+    Future<void> worker() async {
+      while (next < libraries.length && isCurrent()) {
+        final library = libraries[next++];
+        try {
+          final items = await _retryTransient(
+            () => search(query, parentId: library['Id'].toString(), limit: 48),
+            isCurrent: isCurrent,
+          );
+          if (!isCurrent()) return;
+          final label = isVodLibrary(library['Name']?.toString() ?? '') ? 'vod' : 'local';
+          results.addAll(items.map((item) => AggregatedItem(
+            id: item.id, serverId: item.serverId,
+            rawData: {...item.rawData, 'SpeshSource': label},
+          )));
+          onResults(preferLocalSearchResults(results));
+        } catch (_) {
+          failures++;
+        }
+      }
+    }
+    await Future.wait(List.generate(libraries.length.clamp(0, 3), (_) => worker()));
+    if (failures > 0 && isCurrent()) {
+      throw StateError('Some libraries could not be searched. Retry the search.');
+    }
+    return preferLocalSearchResults(results);
+  }
 
   Future<List<String>> suggest(
     String query, {
@@ -33,6 +126,8 @@ class SearchRepository {
       limit: filter.isActive ? limit * 4 : limit,
       recursive: true,
       fields: 'Type,OfficialRating',
+      enableTotalRecordCount: false,
+      collapseBoxSetItems: false,
     );
 
     final items = response['Items'] as List? ?? const [];
@@ -60,18 +155,19 @@ class SearchRepository {
   Future<List<AggregatedItem>> searchPeople(
     String query, {
     int limit = 24,
+    bool Function()? isCurrent,
   }) async {
     final trimmed = query.trim();
     if (trimmed.isEmpty || trimmed.toLowerCase().startsWith('studio:')) {
       return const [];
     }
 
-    final response = await _client.itemsApi.getPersons(
+    final response = await _retryTransient(() => _client.itemsApi.getPersons(
       searchTerm: trimmed,
       limit: limit,
       fields: 'PrimaryImageAspectRatio',
       enableImageTypes: 'Primary',
-    );
+    ), isCurrent: isCurrent ?? () => true);
 
     final items = response['Items'] as List? ?? const [];
     return items.map((item) {
@@ -79,7 +175,7 @@ class SearchRepository {
       data['Type'] ??= 'Person';
       return AggregatedItem(
         id: data['Id']?.toString() ?? '',
-        serverId: data['ServerId']?.toString() ?? '',
+        serverId: _serverId.isNotEmpty ? _serverId : data['ServerId']?.toString() ?? '',
         rawData: data,
       );
     }).toList();
@@ -89,7 +185,7 @@ class SearchRepository {
   /// channel search fetches the lineup and filters by name client-side.
   Future<List<AggregatedItem>> fetchLiveTvChannels() async {
     final response = await _client.liveTvApi.getChannels(
-      fields: 'ImageTags',
+      fields: 'ImageTags,ChannelNumber,CurrentProgram',
       enableTotalRecordCount: false,
       userId: _client.userId,
     );
@@ -99,7 +195,7 @@ class SearchRepository {
       data['Type'] ??= 'TvChannel';
       return AggregatedItem(
         id: data['Id']?.toString() ?? '',
-        serverId: data['ServerId']?.toString() ?? '',
+        serverId: _serverId.isNotEmpty ? _serverId : data['ServerId']?.toString() ?? '',
         rawData: data,
       );
     }).toList();
@@ -108,71 +204,6 @@ class SearchRepository {
   Future<List<AggregatedItem>> search(
     String query, {
     List<String>? includeItemTypes,
-    String? parentId,
-    int? limit,
-  }) async => withoutBlockedItems(
-    await _search(
-      query,
-      includeItemTypes: includeItemTypes,
-      parentId: parentId,
-      limit: limit,
-    ),
-  );
-
-  // Types a search across every library turns up that have no group, since
-  // people and channels come from their own requests.
-  static const _ungroupedTypes = [
-    'Person',
-    'Studio',
-    'Genre',
-    'MusicGenre',
-    'TvChannel',
-  ];
-
-  /// One search across every library for the types in [groups].
-  ///
-  /// Jellyfin fills the page with whatever matched first, so lots of episodes
-  /// or audiobook chapters can push every movie and series out of it. Types
-  /// with no group are left out of the page, and when it still comes back
-  /// full, each group that didn't get [perGroup] items is searched again on
-  /// its own. The page names no types to include, since Jellyfin only finds
-  /// Live TV programs when it's asked for every type.
-  Future<List<AggregatedItem>> searchGroups(
-    String query,
-    List<List<String>> groups, {
-    required int perGroup,
-    required int limit,
-  }) async {
-    if (_client.serverType != ServerType.jellyfin) {
-      return search(query, limit: limit);
-    }
-    final page = await _search(
-      query,
-      excludeItemTypes: _ungroupedTypes,
-      limit: limit,
-    );
-    if (page.length < limit) return withoutBlockedItems(page);
-    final refills = await Future.wait([
-      for (final group in groups)
-        if (page.where((item) => group.contains(item.type)).length < perGroup)
-          _search(
-            query,
-            includeItemTypes: group,
-            limit: perGroup,
-          ).catchError((Object _) => <AggregatedItem>[]),
-    ]);
-    final seen = {for (final item in page) item.id};
-    return withoutBlockedItems([
-      ...page,
-      for (final item in refills.expand((items) => items))
-        if (seen.add(item.id)) item,
-    ]);
-  }
-
-  Future<List<AggregatedItem>> _search(
-    String query, {
-    List<String>? includeItemTypes,
-    List<String>? excludeItemTypes,
     String? parentId,
     int? limit,
   }) async {
@@ -184,21 +215,24 @@ class SearchRepository {
       searchTerm: searchTerm,
       parentId: parentId,
       includeItemTypes: includeItemTypes,
-      excludeItemTypes: excludeItemTypes,
       limit: limit ?? 24,
       recursive: true,
       fields: _searchFields,
       studios: studios,
+      enableTotalRecordCount: false,
+      collapseBoxSetItems: false,
     );
 
     final items = response['Items'] as List? ?? [];
-    return items.map((item) {
-      final data = item as Map<String, dynamic>;
-      return AggregatedItem(
-        id: data['Id']?.toString() ?? '',
-        serverId: data['ServerId']?.toString() ?? '',
-        rawData: data,
-      );
-    }).toList();
+    return withoutBlockedItems(
+      items.map((item) {
+        final data = item as Map<String, dynamic>;
+        return AggregatedItem(
+          id: data['Id']?.toString() ?? '',
+          serverId: _serverId.isNotEmpty ? _serverId : data['ServerId']?.toString() ?? '',
+          rawData: data,
+        );
+      }).toList(),
+    );
   }
 }

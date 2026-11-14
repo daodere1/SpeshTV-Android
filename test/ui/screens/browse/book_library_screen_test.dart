@@ -57,9 +57,6 @@ class _FakePluginSyncService extends ChangeNotifier
   bool get seerrAvailable => false;
 
   @override
-  bool get calendarAvailable => false;
-
-  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -227,12 +224,7 @@ void main() {
     testWidgets('the strip offers Discover by default', (tester) async {
       await pumpScreen(tester);
 
-      expect(stripLabels(tester), [
-        'Overview',
-        'Titles',
-        'Folders',
-        'Discover',
-      ]);
+      expect(stripLabels(tester), ['Overview', 'Titles', 'Discover']);
     });
 
     testWidgets('turning Discover off takes it out of the strip', (
@@ -359,12 +351,7 @@ void main() {
     testWidgets('the chips offer Discover by default', (tester) async {
       await pumpScreen(tester);
 
-      expect(chipLabels(tester), [
-        'Overview',
-        'Titles',
-        'Folders',
-        'Discover',
-      ]);
+      expect(chipLabels(tester), ['Overview', 'Titles', 'Discover']);
     });
 
     testWidgets('turning Discover off takes it out of the chips', (

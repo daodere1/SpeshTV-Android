@@ -12,12 +12,10 @@ import '../../../l10n/app_localizations.dart';
 import '../../../preference/user_preferences.dart';
 import '../../../util/focus/dpad_keys.dart';
 import '../../../util/platform_detection.dart';
-import '../../../util/silo_failure_message.dart';
 import '../../widgets/allow_self_signed_dialog.dart';
 import '../../widgets/client_certificate_dialog.dart';
 import '../../widgets/overlay_sheet.dart';
 import '../../widgets/server_type_icon.dart';
-import '../../widgets/silo_native_offer_dialog.dart';
 
 /// Where the server screen goes once [AddServerDialog] closes.
 sealed class AddServerOutcome {
@@ -86,17 +84,12 @@ const _warningText = Color(0xFFFFD27A);
     tile: const Color(0x24E5A00D),
     glyph: const Color(0xFFF2BC45),
   ),
-  ServerType.silo => (
-    tile: const Color(0x245EC7BC),
-    glyph: const Color(0xFF5EC7BC),
-  ),
 };
 
 String _brand(ServerType type) => switch (type) {
   ServerType.jellyfin => 'Jellyfin',
   ServerType.emby => 'Emby',
   ServerType.plex => 'Plex',
-  ServerType.silo => 'Silo',
 };
 
 ButtonStyle _primaryStyle({bool compact = false}) {
@@ -156,10 +149,9 @@ ButtonStyle _noticeButtonStyle() {
 }
 
 class AddServerButton extends StatefulWidget {
-  const AddServerButton({super.key, required this.onPressed, this.focusNode});
+  const AddServerButton({super.key, required this.onPressed});
 
   final VoidCallback? onPressed;
-  final FocusNode? focusNode;
 
   @override
   State<AddServerButton> createState() => _AddServerButtonState();
@@ -199,7 +191,6 @@ class _AddServerButtonState extends State<AddServerButton> {
           type: MaterialType.transparency,
           child: InkWell(
             onTap: widget.onPressed,
-            focusNode: widget.focusNode,
             onHover: (hovered) => setState(() => _hovered = hovered),
             onFocusChange: (focused) => setState(() => _focused = focused),
             borderRadius: BorderRadius.circular(16),
@@ -276,7 +267,7 @@ class _AddServerButtonState extends State<AddServerButton> {
 
 enum _Step { choose, address, found }
 
-enum _Failure { none, unreachable, untrusted, clientCert, siloUpdate }
+enum _Failure { none, unreachable, untrusted, clientCert }
 
 class AddServerDialog extends StatefulWidget {
   final AppLocalizations l10n;
@@ -310,7 +301,6 @@ class _AddServerDialogState extends State<AddServerDialog> {
   _Failure _failure = _Failure.none;
   String? _untrustedAddress;
   String? _clientCertAddress;
-  String? _siloUpdateMessage;
   Server? _found;
   bool _foundIsNew = false;
   bool _dismissed = false;
@@ -419,11 +409,7 @@ class _AddServerDialogState extends State<AddServerDialog> {
     });
 
     try {
-      final server = await widget.serverRepo.addServer(
-        address,
-        offerSiloNative: (offer) async =>
-            mounted && await confirmSiloNativeServer(context, offer),
-      );
+      final server = await widget.serverRepo.addServer(address);
       if (!mounted) return;
       if (server != null) {
         setState(() {
@@ -435,8 +421,8 @@ class _AddServerDialogState extends State<AddServerDialog> {
         _focusLater(_continueFocus);
         return;
       }
-      // Only Jellyfin, Emby and Silo answer that probe, so a Plex server goes
-      // to its plex.tv sign-in.
+      // Only Jellyfin and Emby answer that probe, so a Plex server goes to its
+      // plex.tv sign-in.
       final plexUri = GetIt.instance.isRegistered<PlexTvService>()
           ? await GetIt.instance<PlexTvService>().findServerAt(address)
           : null;
@@ -446,14 +432,6 @@ class _AddServerDialogState extends State<AddServerDialog> {
         return;
       }
       final failure = widget.serverRepo.lastFailure;
-      final unsupportedSilo = failure?.unsupportedSilo;
-      if (unsupportedSilo != null) {
-        _siloUpdateMessage = SiloUpdateRequired.of(
-          unsupportedSilo,
-        ).message(widget.l10n);
-        _fail(_Failure.siloUpdate);
-        return;
-      }
       final clientCert = failure?.clientCertCandidate;
       if (clientCert != null) {
         _clientCertAddress = clientCert;
@@ -824,10 +802,6 @@ class _AddServerDialogState extends State<AddServerDialog> {
             body: l10n.clientCertRequired,
             actions: [_clientCertButton(l10n)],
           ),
-        ],
-        if (_failure == _Failure.siloUpdate) ...[
-          const SizedBox(height: 14),
-          _Notice(warning: false, body: _siloUpdateMessage!),
         ],
       ],
     );

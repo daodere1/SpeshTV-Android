@@ -24,26 +24,10 @@ Future<void> scrollListToIndex(
   Duration? duration,
   Curve curve = _kScrollCurve,
 }) {
-  return scrollListToOffset(
-    controller,
-    index * itemExtent + leadingPadding,
-    animate: animate,
-    duration: duration,
-    curve: curve,
-  );
-}
-
-Future<void> scrollListToOffset(
-  ScrollController controller,
-  double offset, {
-  bool animate = true,
-  Duration? duration,
-  Curve curve = _kScrollCurve,
-}) {
   if (!controller.hasClients) return Future<void>.value();
   final effectiveDuration = duration ?? navigationAnimationDuration;
   final maxOffset = controller.position.maxScrollExtent;
-  final target = offset.clamp(0.0, maxOffset);
+  final target = (index * itemExtent + leadingPadding).clamp(0.0, maxOffset);
   if (animate) {
     return controller.animateTo(
       target,

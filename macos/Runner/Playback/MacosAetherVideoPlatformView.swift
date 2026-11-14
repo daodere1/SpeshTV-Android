@@ -92,11 +92,11 @@ final class MacosAetherVideoContainerView: NSView {
     }
 
     /// Accepts the Dart enum names (fit/autoCrop/stretch) and the native raw
-    /// values (Fit/Zoom to Fill/Stretch).
+    /// values (Fit/Auto Crop/Stretch).
     private static func zoomMode(fromWire value: String) -> ZoomMode? {
         switch value {
         case "fit", "Fit": return .fit
-        case "autoCrop", "Zoom to Fill": return .zoomToFill
+        case "autoCrop", "Auto Crop": return .autoCrop
         case "stretch", "Stretch": return .stretch
         default: return nil
         }

@@ -4,6 +4,33 @@ import 'package:moonfin/util/tv_ui_scale.dart';
 import 'package:moonfin_native_video/moonfin_native_video.dart';
 
 void main() {
+  testWidgets('TV scale survives empty and resized viewports', (tester) async {
+    for (final size in [
+      Size.zero,
+      const Size(960, 540),
+      const Size(960, 0),
+      const Size(960, 300),
+      const Size(960, 540),
+    ]) {
+      await tester.pumpWidget(
+        MediaQuery(
+          data: MediaQueryData(size: size),
+          child: const Directionality(
+            textDirection: TextDirection.ltr,
+            child: TvUiScale(child: SizedBox.expand()),
+          ),
+        ),
+      );
+      for (final transform in tester.widgetList<Transform>(
+        find.byType(Transform),
+      )) {
+        expect(transform.transform.storage.every((v) => v.isFinite), isTrue);
+        expect(transform.transform.determinant(), isNot(0));
+      }
+      expect(find.byType(FittedBox), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
+  });
   group('the TV design canvas', () {
     test('is the same whatever density the panel reports', () {
       // tvOS hands Flutter 1920 points across. A 1080p Android TV at density

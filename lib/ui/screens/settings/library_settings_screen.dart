@@ -13,7 +13,6 @@ import '../../widgets/settings/preference_tiles.dart';
 import 'settings_app_bar.dart';
 import '../../widgets/focus/request_initial_focus.dart';
 import '../../../util/platform_detection.dart';
-import '../../../util/signed_in_server_features.dart';
 
 class LibraryVisibilityScreen extends StatefulWidget {
   const LibraryVisibilityScreen({super.key});
@@ -116,11 +115,6 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
       } catch (_) {
         if (!mounted || opId != _lastQueuedOpId) return;
         setState(() => _config = config);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context).friendsSaveFailed),
-          ),
-        );
       }
     });
     return _saveQueue;
@@ -218,13 +212,9 @@ class _LibraryVisibilityScreenState extends State<LibraryVisibilityScreen> {
             // (getItems with type filtering rather than getLatestItems on a parent).
             // Until a dedicated Latest row type exists for these, hide the toggle
             // to avoid surfacing a setting that has no effect.
-            //
-            // Silo keeps no Latest exclusions, so its libraries have no
-            // switch (FeatureDetector.supportsLatestItemsExcludes).
             if (!_noLatestMediaSupport.contains(
-                  lib.collectionType.toLowerCase(),
-                ) &&
-                activeServerSupports((f) => f.supportsLatestItemsExcludes))
+              lib.collectionType.toLowerCase(),
+            ))
               TvFocusHighlight(
                 builder: (_, focused) => SwitchListTile.adaptive(
                   secondary: Icon(

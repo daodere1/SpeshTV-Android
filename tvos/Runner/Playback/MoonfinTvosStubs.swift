@@ -1,7 +1,6 @@
 import AVFoundation
 import Foundation
 import UIKit
-import VideoToolbox
 
 enum AppConstants {
     static let clientVersion =
@@ -103,18 +102,16 @@ enum VideoCapabilityDetector {
         let width = is4K ? 3840 : 1920
         let height = is4K ? 2160 : 1080
 
-        // An Apple TV with an AV1 hardware decoder gets AV1 up to 4K. Without
-        // one, AetherEngine decodes AV1 in software, so only A12 and newer boxes
-        // advertise it, capped at 1080p unless the viewer opts into 4K.
+        // AV1 has no hardware decoder on any Apple TV, so AetherEngine decodes
+        // it in software with dav1d. Only advertise it on A12+ boxes and cap it
+        // at 1080p so a 4K AV1 rip transcodes instead of stuttering.
         let generation = currentGeneration()
-        let hardwareAv1 = VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
-        let av1 = hardwareAv1 || generation == .k4Gen2 || generation == .k4Gen3
+        let softwareAv1 = generation == .k4Gen2 || generation == .k4Gen3
 
         // Apple TV HD is an A8 with no HEVC decoder, and not enough headroom to
         // decode HEVC, High 10 or VC-1 in software either. Claiming them made
         // the server direct play files the box then couldn't decode, so nothing
-        // played. Advertising H.264 only gets those transcoded instead, unless
-        // the viewer opts into decoding 1080p HEVC in software.
+        // played. Advertising H.264 only gets those transcoded instead.
         let isHd = generation == .hd
         let avcLevel = isHd ? 42 : 52
 
@@ -127,7 +124,6 @@ enum VideoCapabilityDetector {
             "hevcMainLevel": 153,
             "supportsHevcMain10": !isHd,
             "hevcMain10Level": 153,
-            "offersHevcSoftwareDecode": isHd,
             "supportsHevcDolbyVision": dolbyVision,
             // AetherEngine converts P7 dual-layer to P8.1 per-packet (libdovi),
             // so EL sources direct-play (base-layer quality, no FEL decode).
@@ -141,16 +137,14 @@ enum VideoCapabilityDetector {
             // Software decode paths (AVSampleBufferDisplayLayer): VP9, MPEG-2,
             // VC-1, interlaced H.264 all play without server transcode.
             "supportsVc1": !isHd,
-            "supportsAv1": av1,
-            "supportsAv1Main10": av1,
-            "supportsAv1Hdr10": av1 && hdr10,
+            "supportsAv1": softwareAv1,
+            "supportsAv1Main10": softwareAv1,
+            "supportsAv1Hdr10": softwareAv1 && hdr10,
             "supportsAv1Hdr10Plus": false,
             "supportsAv1DolbyVision": false,
             "maxResolutionAvc": ["width": width, "height": height],
             "maxResolutionHevc": ["width": width, "height": height],
-            "maxResolutionAv1": hardwareAv1
-                ? ["width": width, "height": height]
-                : ["width": 1920, "height": 1080],
+            "maxResolutionAv1": ["width": 1920, "height": 1080],
             "maxResolutionVc1": ["width": 1920, "height": 1080],
             "deviceModel": deviceModelIdentifier(),
             "clientVersion": AppConstants.clientVersion,
