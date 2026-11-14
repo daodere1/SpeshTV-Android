@@ -25,7 +25,6 @@ build/windows/store/2.8.0.0-review/SpeshTV-2.8.0.0-x64.msix, built from
 2.8.0+30000196 with announcements disabled. MakeAppx validation and archive
 identity verification passed. This unsigned replacement has not been
 uploaded; the existing 2.7.0.0 Partner Center draft is unchanged.
-See MOONFIN_2_8_INTEGRATION.md for integration and test scope.
 
 - Version: 2.7.0.0, x64, Windows desktop only; minimum Windows build 19041.
 - Source build: 2.7.0+30000195, no-announcements variant.

@@ -55,5 +55,4 @@ SpeshTV is an independent fork, not an official Moonfin release. Thanks to
 Flutter and the authors of the included dependencies. Upstream attribution and
 third-party notices remain in their source files. The license accompanying this
 customized source is preserved in [LICENSE](LICENSE); vendored packages retain
-their own licenses. See [upstream integration notes](MOONFIN_2_8_INTEGRATION.md)
-for the base used by these customizations.
+their own licenses.
