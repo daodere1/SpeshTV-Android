@@ -257,6 +257,24 @@ void main() {
     expect(NavigationLayout.chromeFocusRoots, isEmpty);
   });
 
+  testWidgets('native chrome ignores legacy global navigation preferences',
+      (tester) async {
+    final prefs = GetIt.instance<UserPreferences>();
+    await prefs.set(UserPreferences.showShuffleButton, true);
+    await prefs.set(UserPreferences.showGenresButton, true);
+    await prefs.set(UserPreferences.showFavoritesButton, true);
+    for (final chrome in [const LeftSidebar(), const TopToolbar()]) {
+      await tester.pumpWidget(_host(chrome));
+      await tester.pumpAndSettle();
+      for (final key in [
+        'sidebar-shuffle', 'sidebar-genres', 'sidebar-favorites',
+        'toolbar_shuffle', 'toolbar_genres', 'toolbar_favorites',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsNothing);
+      }
+    }
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
   final linux = TargetPlatformVariant.only(TargetPlatform.linux);
 
   group('desktop sidebar keyboard navigation', () {
@@ -266,6 +284,24 @@ void main() {
     tearDown(
       () => PlatformDetection.setInterfaceLayout(InterfaceLayout.automatic),
     );
+
+    testWidgets('collapsed Cinematic rail fits icons before keyboard expansion',
+        (tester) async {
+      await tester.pumpWidget(_webLikeHost());
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(tester.takeException(), isNull);
+      NavigationLayout.focusNavbarNotifier.value!();
+      for (var frame = 0; frame < 16; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(tester.takeException(), isNull);
+      }
+      expect(_focusedLabel(), 'LeftSidebarHome');
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      for (var frame = 0; frame < 16; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(tester.takeException(), isNull);
+      }
+    }, variant: linux);
 
     testWidgets('Up and Down move focus between the menu items', (
       tester,

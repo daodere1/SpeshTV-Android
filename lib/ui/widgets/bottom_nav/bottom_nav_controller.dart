@@ -21,6 +21,7 @@ import '../../../preference/user_preferences.dart';
 import '../../../util/game_library.dart';
 import '../../../util/live_tv_library.dart';
 import '../downloads_nav_slot.dart';
+import '../spesh_brand.dart';
 import '../friends_nav_slot.dart';
 import 'bottom_nav_model.dart';
 
@@ -117,6 +118,7 @@ class BottomNavController extends ChangeNotifier {
   List<BottomNavBarItem> barItems() => resolveBarItems(
         gates,
         _prefs.get(UserPreferences.bottomNavbarTabs),
+        speshPresentation: speshWeb,
         withoutSearch: style == BottomNavbarStyle.split,
         isAvailable: isAvailable,
       );
@@ -127,6 +129,7 @@ class BottomNavController extends ChangeNotifier {
         _prefs.get(UserPreferences.showSyncPlayButton);
     return resolveHubTiles(
       gates: gates,
+      speshPresentation: speshWeb,
       barItems: barItems(),
       isAvailable: isAvailable,
       savedAvailable:

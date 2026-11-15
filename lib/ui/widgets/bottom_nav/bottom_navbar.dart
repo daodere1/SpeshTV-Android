@@ -176,6 +176,8 @@ class _BottomNavbarState extends State<BottomNavbar> {
     final barHeight = BottomNavbar.heightFor(context, style: _style);
     HapticFeedback.selectionClick();
     switch (item.kind) {
+      case BottomNavItemKind.studios:
+        openBottomNavStudios(context);
       case BottomNavItemKind.home:
         openBottomNavHome(context, alreadyHome: route == Destinations.home);
       case BottomNavItemKind.tab:

@@ -3,10 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:moonfin/data/models/aggregated_item.dart';
 import 'package:moonfin/data/repositories/search_repository.dart';
+import 'package:moonfin/data/repositories/seerr_repository.dart';
+import 'package:moonfin/data/services/seerr/seerr_api_models.dart';
 import 'package:moonfin/data/viewmodels/search_view_model.dart';
 import 'package:server_core/server_core.dart';
 
 class Client extends Mock implements MediaServerClient {}
+class Seerr extends Mock implements SeerrRepository {}
 class Search extends SearchRepository {
   Search(super.client);
   final requests = <({String query, bool Function() current,
@@ -51,6 +54,28 @@ void main() {
     for (final r in repo.requests) { if (!r.done.isCompleted) r.done.complete(); }
     if (!repo.people.isCompleted) repo.people.complete([]);
   });
+  for (final source in [SearchSource.all, SearchSource.vod, SearchSource.local]) {
+    test('Seerr catalogue participates only in intended source $source', () async {
+      final seerr = Seerr();
+      when(() => seerr.ensureInitialized()).thenAnswer((_) async {});
+      when(() => seerr.isAvailable).thenReturn(true);
+      when(() => seerr.search('match', limit: any(named: 'limit')))
+          .thenAnswer((_) async => const SeerrDiscoverPage());
+      vm.setSeerrRepository(seerr);
+      vm.setSource(source);
+      vm.searchImmediate('match');
+      for (final request in repo.requests) {
+        request.done.complete();
+      }
+      repo.people.complete([]);
+      await Future<void>.delayed(Duration.zero);
+      if (source == SearchSource.local) {
+        verifyNever(() => seerr.search('match', limit: any(named: 'limit')));
+      } else {
+        verify(() => seerr.search('match', limit: any(named: 'limit'))).called(1);
+      }
+    });
+  }
   test('library results arrive before optional people search completes', () async {
     vm.searchImmediate('movie');
     repo.requests.single.publish([result('movie')]);

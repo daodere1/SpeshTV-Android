@@ -4,6 +4,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'spesh_brand.dart';
+import 'spesh_cinematic.dart';
+import 'spesh_streaming_services.dart';
 import 'package:flutter/services.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -987,9 +989,9 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
 
   Widget _buildCenter() {
     final isNeon = ThemeRegistry.active.id == ThemeRegistry.neonPulseId;
-    final showShuffle = _prefs.get(UserPreferences.showShuffleButton);
-    final showGenres = _prefs.get(UserPreferences.showGenresButton);
-    final showFavorites = _prefs.get(UserPreferences.showFavoritesButton);
+    final showShuffle = !speshWeb && _prefs.get(UserPreferences.showShuffleButton);
+    final showGenres = !speshWeb && _prefs.get(UserPreferences.showGenresButton);
+    final showFavorites = !speshWeb && _prefs.get(UserPreferences.showFavoritesButton);
     // Checked alongside the show* preferences, never written into them, since
     // those sync and would follow the account to the parent's other devices.
     final kidsMode = _kidsMode;
@@ -1072,6 +1074,40 @@ class _TopToolbarState extends State<TopToolbar> with RouteAware {
                   },
                 ),
               ),
+              if (speshWeb && !kidsMode) ...[
+                _gap(),
+                _orderButton(
+                  order: (order++).toDouble(),
+                  child: ExpandableIconButton(
+                    key: const ValueKey('toolbar_studios'),
+                    forceExpanded: alwaysExpanded,
+                    icon: Icons.business_outlined,
+                    label: 'Studios',
+                    baseColor: nextNavColor(),
+                    onPressed: () async {
+                      final name = await pickSpeshStudio(context);
+                      if (!context.mounted || name == null) return;
+                      context.navigateTopLevel(streamingServiceRoute(name));
+                    },
+                  ),
+                ),
+              ],
+              if (speshWeb && !kidsMode) ...[
+                _gap(),
+                _orderButton(
+                  order: (order++).toDouble(),
+                  child: ExpandableIconButton(
+                    key: const ValueKey('toolbar_calendar'),
+                    forceExpanded: alwaysExpanded,
+                    icon: Icons.calendar_month_outlined,
+                    label: 'Today & upcoming',
+                    baseColor: nextNavColor(),
+                    onPressed: () => context.navigateTopLevel(
+                      Destinations.cinematicCalendar,
+                    ),
+                  ),
+                ),
+              ],
               if (showShuffle) ...[
                 _gap(),
                 _orderButton(
@@ -1771,17 +1807,19 @@ class _ToolbarLibrariesTriggerButtonState
     if (isLeanback) {
       final isNeon = ThemeRegistry.active.id == ThemeRegistry.neonPulseId;
       final highlighted = _focused || widget.expanded;
-      bgColor = highlighted ? Colors.white : Colors.transparent;
+      bgColor = highlighted
+          ? (speshCinematic ? AppColorScheme.accent : Colors.white)
+          : Colors.transparent;
       fgColor = highlighted
-          ? Colors.black
+          ? (speshCinematic ? AppColorScheme.onAccent : Colors.black)
           : (widget.iconColor ??
                 (isNeon
                     ? AppColorScheme.accent
                     : Colors.white.withValues(alpha: 0.6)));
     } else {
-      final focusColor = Color(
-        _prefs.get(UserPreferences.focusColor).colorValue,
-      );
+      final focusColor = speshCinematic
+          ? AppColorScheme.inputBorderFocused
+          : Color(_prefs.get(UserPreferences.focusColor).colorValue);
       final base =
           widget.iconColor ?? AppColorScheme.onSurface.withValues(alpha: 0.6);
       final active = _focused || _hovered || widget.expanded;
@@ -1907,12 +1945,16 @@ class _ToolbarLibraryLabelButtonState
     final Color bgColor;
     final Color fgColor;
     if (isLeanback) {
-      bgColor = _focused ? Colors.white : Colors.transparent;
-      fgColor = _focused ? Colors.black : Colors.white;
+      bgColor = _focused
+          ? (speshCinematic ? AppColorScheme.accent : Colors.white)
+          : Colors.transparent;
+      fgColor = _focused
+          ? (speshCinematic ? AppColorScheme.onAccent : Colors.black)
+          : AppColorScheme.onSurface;
     } else {
-      final focusColor = Color(
-        _prefs.get(UserPreferences.focusColor).colorValue,
-      );
+      final focusColor = speshCinematic
+          ? AppColorScheme.inputBorderFocused
+          : Color(_prefs.get(UserPreferences.focusColor).colorValue);
       bgColor = active
           ? focusColor.withValues(alpha: 0.18)
           : Colors.transparent;
@@ -2362,7 +2404,9 @@ class _LibraryDropdownItemState extends State<_LibraryDropdownItem> {
 
   @override
   Widget build(BuildContext context) {
-    final focusColor = Color(_prefs.get(UserPreferences.focusColor).colorValue);
+    final focusColor = speshCinematic
+        ? AppColorScheme.inputBorderFocused
+        : Color(_prefs.get(UserPreferences.focusColor).colorValue);
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),

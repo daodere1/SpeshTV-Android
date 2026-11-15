@@ -32,8 +32,11 @@ class _FakeUserRepository extends Fake implements UserRepository {
 
 class _FakeUserViewsRepository extends ChangeNotifier
     implements UserViewsRepository {
+  _FakeUserViewsRepository(this.libraries);
+  final List<AggregatedLibrary> libraries;
+
   @override
-  Future<List<AggregatedLibrary>> getUserViews() async => [];
+  Future<List<AggregatedLibrary>> getUserViews() async => libraries;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -85,6 +88,7 @@ const testTrack = AggregatedItem(
 Future<({UserPreferences prefs, FakePlaybackManager playback})>
     setUpBottomNav({
   BottomNavbarStyle style = BottomNavbarStyle.dock,
+  List<AggregatedLibrary> libraries = const [],
 }) async {
   SharedPreferences.setMockInitialValues({});
   final store = PreferenceStore();
@@ -95,7 +99,7 @@ Future<({UserPreferences prefs, FakePlaybackManager playback})>
   getIt.registerSingleton<PreferenceStore>(store);
   getIt.registerSingleton<UserPreferences>(prefs);
   getIt.registerSingleton<UserRepository>(_FakeUserRepository());
-  getIt.registerSingleton<UserViewsRepository>(_FakeUserViewsRepository());
+  getIt.registerSingleton<UserViewsRepository>(_FakeUserViewsRepository(libraries));
   getIt.registerSingleton<PluginSyncService>(_FakePluginSyncService());
   getIt.registerSingleton<SeerrPreferences>(
     SeerrPreferences(store, _FakeSessionRepository()),

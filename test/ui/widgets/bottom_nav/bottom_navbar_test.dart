@@ -31,7 +31,7 @@ void main() {
 
   Finder hubTile(String label) => find
       .ancestor(of: find.text(label), matching: find.byType(InkWell))
-      .first;
+      .last;
 
   group('heights', () {
     test('each style reports the room it takes', () {
@@ -93,7 +93,7 @@ void main() {
 
       expect(find.byType(DockBarView), findsOneWidget);
       // Libraries waits for a library to exist, the fake server has none.
-      for (final label in ['Home', 'Search', 'Favorites', 'You']) {
+      for (final label in ['Home', 'Search', 'Studios', 'You']) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
       expect(find.text('Libraries'), findsNothing);
@@ -142,8 +142,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Settings'), findsOneWidget);
-      expect(find.text('Shuffle'), findsOneWidget);
-      expect(find.text('Genres'), findsOneWidget);
+      expect(find.text('Shuffle'), findsNothing);
+      expect(find.text('Studios'), findsNWidgets(2));
+      expect(find.text('Genres'), findsNothing);
       expect(find.text('Remote Control'), findsOneWidget);
       // No Jellyfin client is signed in here, so Quick Connect has nothing
       // to authorize against.
@@ -161,7 +162,7 @@ void main() {
       await tester.tap(find.text('You'));
       await tester.pumpAndSettle();
 
-      final tile = hubTile('Shuffle');
+      final tile = hubTile('Remote Control');
       final icon = find.descendant(
         of: tile,
         matching: find.byType(AdaptiveIcon),
@@ -169,7 +170,7 @@ void main() {
       expect(tester.getCenter(icon).dx, tester.getCenter(tile).dx);
       expect(
         tester.getRect(icon).bottom,
-        lessThan(tester.getRect(find.text('Shuffle')).top),
+        lessThan(tester.getRect(find.text('Remote Control')).top),
       );
     });
 
@@ -189,12 +190,12 @@ void main() {
       );
       expect(
         tester.getSize(wrapped).height,
-        tester.getSize(find.text('Shuffle')).height * 2,
+        tester.getSize(find.descendant(
+            of: hubTile('Studios'), matching: find.text('Studios'))).height * 2,
       );
       final height = tester.getSize(hubTile('Remote Control')).height;
       expect(height, greaterThan(72));
-      expect(tester.getSize(hubTile('Shuffle')).height, height);
-      expect(tester.getSize(hubTile('Genres')).height, height);
+      expect(tester.getSize(hubTile('Studios')).height, height);
     });
 
     testWidgets('a new screen springs the indicator over from the last tab',
@@ -225,7 +226,7 @@ void main() {
       await tester.pumpWidget(bottomNavApp());
       await tester.pump();
 
-      expect(find.text('Genres'), findsOneWidget);
+      expect(find.text('Genres'), findsNothing);
       expect(find.text('Search'), findsNothing);
       expect(find.text('Favorites'), findsNothing);
     });
@@ -350,6 +351,26 @@ void main() {
       return theme;
     }
 
+    if (ThemeRegistry.cinematicOnly) {
+      for (final legacyId in [ThemeRegistry.neonPulseId, ThemeRegistry.eightbitHeroId]) {
+        testWidgets('legacy theme $legacyId resolves to the Cinematic bar', (tester) async {
+          ThemeRegistry.setActiveById(legacyId);
+          expect(ThemeRegistry.active.id, 'spesh-cinematic');
+          expect(ThemeRegistry.availableThemes.keys, ['spesh-cinematic']);
+          final theme = await resolve(tester);
+          expect(theme.pixel, isFalse);
+          expect(theme.neonEdge, isNull);
+          expect(theme.indicatorColor(2), theme.accent);
+          expect(theme.hairline, ThemeRegistry.active.borders.navBorder);
+          usePhoneView(tester);
+          await tester.pumpWidget(bottomNavApp());
+          await tester.pumpAndSettle();
+          expect(find.byType(DockBarView), findsOneWidget);
+          expect(find.text('Studios'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        });
+      }
+    } else {
     testWidgets('Neon Pulse colours each tab from its cycle', (tester) async {
       ThemeRegistry.setActiveById(ThemeRegistry.neonPulseId);
       final theme = await resolve(tester);
@@ -378,6 +399,8 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     });
+
+    }
 
     testWidgets('the labels stay readable on the bar', (tester) async {
       final theme = await resolve(tester);

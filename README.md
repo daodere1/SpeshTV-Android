@@ -8,13 +8,14 @@ because the application and its vendored packages share Flutter code.
 ## Features
 
 - SpeshTV branding and STV app artwork.
-- SpeshTV, SpeshFlix, SpeshPrime and SpeshApple themes.
+- Cinematic black/charcoal interface, gold actions and blue remote/keyboard focus.
 - Local-first search and deduplicated Continue Watching / Next Up.
 - Cached home content and Spotlight with background refresh and recovery.
 - Live TV preview, full-screen playback, channel switching and recovery.
 - Country, sports-package and tag filters; numeric channel entry.
 - Remote-friendly guide navigation and hold-Select channel actions.
-- Series seasons, watched counts, episode filters and resume controls.
+- Framed series/season/episode browsing, watched counts, episode filters and resume controls.
+- Studios/service discovery and a Today-forward Eastern-time calendar.
 - Platform-specific playback capabilities and HDR handling.
 
 The client connects to servers you configure. It does not include a media

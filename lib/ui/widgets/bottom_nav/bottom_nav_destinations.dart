@@ -14,6 +14,7 @@ import '../adaptive/sf_symbol.dart';
 import '../remote_control_dialog.dart';
 import '../seerr_icons.dart';
 import '../shuffle_overlay.dart';
+import '../spesh_streaming_services.dart';
 import '../user_menu_dialog.dart';
 import 'bottom_nav_model.dart';
 import 'bottom_nav_tab.dart';
@@ -35,6 +36,8 @@ String bottomNavHubActionLabel(
   BottomNavHubAction action,
 ) =>
     switch (action) {
+      BottomNavHubAction.studios => 'Studios',
+      BottomNavHubAction.calendar => 'Today & upcoming',
       BottomNavHubAction.saved => l10n.savedMedia,
       BottomNavHubAction.shuffle => l10n.shuffle,
       BottomNavHubAction.syncPlay => l10n.syncPlay,
@@ -60,6 +63,8 @@ String bottomNavbarStyleHint(AppLocalizations l10n, BottomNavbarStyle style) =>
     };
 
 IconData bottomNavHubActionIcon(BottomNavHubAction action) => switch (action) {
+      BottomNavHubAction.studios => Icons.business_outlined,
+      BottomNavHubAction.calendar => Icons.calendar_month_outlined,
       BottomNavHubAction.saved => Icons.download_for_offline,
       BottomNavHubAction.shuffle => Icons.shuffle_rounded,
       BottomNavHubAction.syncPlay => Icons.groups_rounded,
@@ -108,6 +113,15 @@ BottomNavItemView bottomNavItemView(
   int badge = 0,
 }) {
   return switch (item.kind) {
+    BottomNavItemKind.studios => BottomNavItemView(
+        id: item.id,
+        label: 'Studios',
+        slot: item.slot,
+        icon: (active, size, color) => AdaptiveIcon(
+          active ? Icons.business : Icons.business_outlined,
+          size: size, color: color,
+        ),
+      ),
     BottomNavItemKind.home => BottomNavItemView(
         id: item.id,
         label: l10n.home,
@@ -167,6 +181,10 @@ void openBottomNavHome(BuildContext context, {required bool alreadyHome}) {
 
 void runBottomNavHubAction(BuildContext context, BottomNavHubAction action) {
   switch (action) {
+    case BottomNavHubAction.calendar:
+      context.navigateTopLevel(Destinations.cinematicCalendar);
+    case BottomNavHubAction.studios:
+      openBottomNavStudios(context);
     case BottomNavHubAction.saved:
       showDownloadsDialog(context);
     case BottomNavHubAction.shuffle:
@@ -180,4 +198,11 @@ void runBottomNavHubAction(BuildContext context, BottomNavHubAction action) {
     case BottomNavHubAction.remoteControl:
       showRemoteControlDialog(context);
   }
+}
+
+/// Uses the bar context so dismissing the hub cannot invalidate navigation.
+Future<void> openBottomNavStudios(BuildContext context) async {
+  final name = await pickSpeshStudio(context);
+  if (!context.mounted || name == null) return;
+  context.navigateTopLevel(streamingServiceRoute(name));
 }

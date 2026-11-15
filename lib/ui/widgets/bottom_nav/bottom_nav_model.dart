@@ -1,7 +1,8 @@
 import '../../../preference/bottom_nav_tabs.dart';
 import '../../navigation/destinations.dart';
+import '../spesh_streaming_services.dart';
 
-enum BottomNavItemKind { home, tab, you }
+enum BottomNavItemKind { home, tab, studios, you }
 
 /// One cell on the bar. [slot] is the cell's place among the offered items,
 /// which is what the theme's navbar colour cycle is keyed on.
@@ -17,11 +18,15 @@ class BottomNavBarItem {
   const BottomNavBarItem.tab(BottomNavTab tab, int slot)
       : this._(BottomNavItemKind.tab, tab, slot);
 
+  const BottomNavBarItem.studios(int slot)
+      : this._(BottomNavItemKind.studios, null, slot);
+
   const BottomNavBarItem.you(int slot)
       : this._(BottomNavItemKind.you, null, slot);
 
   String get id => switch (kind) {
         BottomNavItemKind.home => 'home',
+        BottomNavItemKind.studios => 'studios',
         BottomNavItemKind.you => 'you',
         BottomNavItemKind.tab => tab!.name,
       };
@@ -50,18 +55,36 @@ List<BottomNavBarItem> resolveBarItems(
   BottomNavTabGates gates,
   String rawPins, {
   bool withoutSearch = false,
+  bool speshPresentation = false,
   bool Function(BottomNavTab tab)? isAvailable,
 }) {
   final pins = gates
       .resolvePins(rawPins)
       .where((t) => !withoutSearch || t != BottomNavTab.search)
+      .where((t) => !speshPresentation ||
+          (t != BottomNavTab.favorites && t != BottomNavTab.genres))
       .toList();
   final items = <BottomNavBarItem>[const BottomNavBarItem.home()];
-  for (var i = 0; i < pins.length; i++) {
-    if (isAvailable != null && !isAvailable(pins[i])) continue;
-    items.add(BottomNavBarItem.tab(pins[i], i + 1));
+  final studios = speshPresentation && !gates.kidsMode;
+  // Studios shares the existing pin budget and stays beside Search. Split
+  // already has Search in its own capsule, so Studios leads the tab group.
+  final visiblePins = pins.take(studios ? kMaxPinnedBottomNavTabs - 1
+      : kMaxPinnedBottomNavTabs).toList();
+  var slot = 1;
+  if (studios && !visiblePins.contains(BottomNavTab.search)) {
+    items.add(BottomNavBarItem.studios(slot++));
   }
-  items.add(BottomNavBarItem.you(pins.length + 1));
+  for (var i = 0; i < visiblePins.length; i++) {
+    final tab = visiblePins[i];
+    final tabSlot = slot++;
+    if (isAvailable == null || isAvailable(tab)) {
+      items.add(BottomNavBarItem.tab(tab, tabSlot));
+    }
+    if (studios && tab == BottomNavTab.search) {
+      items.add(BottomNavBarItem.studios(slot++));
+    }
+  }
+  items.add(BottomNavBarItem.you(slot));
   return items;
 }
 
@@ -91,9 +114,14 @@ int? activeBarIndex(
   required bool hubOpen,
 }) {
   final route = activeRoute ?? '';
+  if (!hubOpen && isSpeshStudioRoute(route)) {
+    final studios = items.indexWhere((item) => item.kind == BottomNavItemKind.studios);
+    if (studios >= 0) return studios;
+  }
   for (var i = 0; i < items.length; i++) {
     final item = items[i];
     final active = switch (item.kind) {
+      BottomNavItemKind.studios => !hubOpen && isSpeshStudioRoute(route),
       BottomNavItemKind.you => hubOpen,
       BottomNavItemKind.home => !hubOpen && route == Destinations.home,
       BottomNavItemKind.tab =>
@@ -105,6 +133,8 @@ int? activeBarIndex(
 }
 
 enum BottomNavHubAction {
+  studios,
+  calendar,
   saved,
   shuffle,
   syncPlay,
@@ -142,6 +172,7 @@ List<BottomNavHubTile> resolveHubTiles({
   required BottomNavTabGates gates,
   required List<BottomNavBarItem> barItems,
   required bool Function(BottomNavTab tab) isAvailable,
+  bool speshPresentation = false,
   required bool savedAvailable,
   required bool shuffle,
   required bool syncPlay,
@@ -154,11 +185,17 @@ List<BottomNavHubTile> resolveHubTiles({
       if (item.tab != null) item.tab!,
   };
   return [
+    if (speshPresentation && !gates.kidsMode)
+      const BottomNavHubTile.action(BottomNavHubAction.studios),
+    if (speshPresentation && !gates.kidsMode)
+      const BottomNavHubTile.action(BottomNavHubAction.calendar),
     if (savedAvailable) const BottomNavHubTile.action(BottomNavHubAction.saved),
     for (final tab in BottomNavTab.values)
-      if (!onBar.contains(tab) && gates.offers(tab) && isAvailable(tab))
+      if (!onBar.contains(tab) && gates.offers(tab) && isAvailable(tab) &&
+          (!speshPresentation ||
+              (tab != BottomNavTab.favorites && tab != BottomNavTab.genres)))
         BottomNavHubTile.tab(tab),
-    if (shuffle) const BottomNavHubTile.action(BottomNavHubAction.shuffle),
+    if (shuffle && !speshPresentation) const BottomNavHubTile.action(BottomNavHubAction.shuffle),
     if (syncPlay) const BottomNavHubTile.action(BottomNavHubAction.syncPlay),
     if (quickConnect)
       const BottomNavHubTile.action(BottomNavHubAction.quickConnect),

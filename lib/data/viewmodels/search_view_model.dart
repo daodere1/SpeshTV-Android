@@ -293,12 +293,7 @@ class SearchViewModel extends ChangeNotifier {
           }
           publish();
         }));
-        tasks.add(guarded(() async {
-          final items = await _fetchSeerrResults(query);
-          if (!current()) return;
-          _seerrResults = items;
-          publish();
-        }));
+
         tasks.add(guarded(() async {
           final items = await _fetchGameResults(query);
           if (!current()) return;
@@ -306,6 +301,15 @@ class SearchViewModel extends ChangeNotifier {
           publish();
         }));
       }
+    }
+    if (_scopedParentId == null &&
+        (source == SearchSource.all || source == SearchSource.vod)) {
+      tasks.add(guarded(() async {
+        final items = await _fetchSeerrResults(query);
+        if (!current()) return;
+        _seerrResults = items;
+        publish();
+      }));
     }
     await Future.wait(tasks);
     if (!current()) return;
