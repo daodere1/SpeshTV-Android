@@ -189,11 +189,17 @@ class _SpeshAnimeItemAudioBadgeState extends State<SpeshAnimeItemAudioBadge> {
     }
     final repository = GetIt.instance<AnimeMarkerRepository>();
     _audio = () async {
-      final audioFuture = repository.getForItem(itemId);
+      final audioFuture = repository
+          .getForItem(itemId)
+          .catchError((Object _) => null);
       AnimeEpisodeMarker? marker;
       if (seriesId != null && seriesId.isNotEmpty) {
-        await repository.getForSeries(seriesId);
-        marker = repository.peek(seriesId: seriesId, episodeId: itemId);
+        try {
+          await repository.getForSeries(seriesId);
+          marker = repository.peek(seriesId: seriesId, episodeId: itemId);
+        } catch (_) {
+          // Audio and series classification are independent optional sources.
+        }
       }
       final audio = await audioFuture;
       return AnimeEpisodeMarker(

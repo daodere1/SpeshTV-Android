@@ -832,9 +832,21 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
           : EdgeInsets.zero,
       decoration: speshCinematic
           ? BoxDecoration(
-              color: const Color(0xFF0D0F13),
+              color: const Color(0xEE141A24),
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: const Color(0xFF25272C)),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xF0232C3B), Color(0xF00D1119)],
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x50000000),
+                  blurRadius: 18,
+                  offset: Offset(0, 8),
+                ),
+              ],
+              border: Border.all(color: const Color(0x55C9D9EF)),
             )
           : null,
       duration: _kExpandDuration,
@@ -1317,7 +1329,28 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
                             child: IconButton(
                               key: ValueKey('studio-$name'),
                               tooltip: name,
-                              icon: StreamingServiceIcon(name),
+                              icon: SizedBox(
+                                width: 96,
+                                height: 66,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    StreamingServiceIcon(name),
+                                    const SizedBox(height: 8),
+                                    FittedBox(
+                                      child: Text(
+                                        name,
+                                        maxLines: 1,
+                                        softWrap: false,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                               onPressed: () {
                                 _onNavigate();
                                 _markNavigationAwayFromSidebar();
@@ -1686,8 +1719,12 @@ class _SidebarItemState extends State<_SidebarItem> {
               padding: EdgeInsets.only(
                 // The Cinematic border leaves 70 px inside a 72 px rail.
                 // A desktop icon slot needs 36 px even while labels hide.
-                left: _tvCompact ? 12 : (desktopSidebar && !widget.showLabel ? 16 : 18),
-                right: _tvCompact ? 12 : (desktopSidebar && !widget.showLabel ? 16 : 18),
+                left: _tvCompact
+                    ? 12
+                    : (desktopSidebar && !widget.showLabel ? 16 : 18),
+                right: _tvCompact
+                    ? 12
+                    : (desktopSidebar && !widget.showLabel ? 16 : 18),
               ),
               decoration: BoxDecoration(
                 color: tvFocused

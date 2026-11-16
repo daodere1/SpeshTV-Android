@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../util/platform_detection.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 class StreamingServiceIcon extends StatelessWidget {
   const StreamingServiceIcon(this.name, {super.key});
@@ -24,13 +23,11 @@ class StreamingServiceIcon extends StatelessWidget {
     };
     return Semantics(
       label: name,
-      child: SvgPicture.asset(
-        'assets/icons/streaming/$slug.svg',
-        width: 36,
-        height: 28,
-        colorFilter: name == 'Peacock'
-            ? null
-            : const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+      child: Image.asset(
+        'assets/icons/streaming/$slug.png',
+        width: 64,
+        height: 32,
+        fit: BoxFit.contain,
       ),
     );
   }
@@ -81,22 +78,55 @@ Future<String?> pickSpeshStudio(BuildContext context) {
       ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(children: [
-            const Expanded(child: Text('Studios & streaming services',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700))),
-            const CloseButton(),
-          ]),
-          const SizedBox(height: 16),
-          Wrap(spacing: 12, runSpacing: 12, children: [
-            for (final service in speshStreamingServices)
-              SizedBox(width: 76, height: 64, child: IconButton.filledTonal(
-                tooltip: service.name,
-                onPressed: () => Navigator.of(context).pop(service.name),
-                icon: StreamingServiceIcon(service.name),
-              )),
-          ]),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Studios & streaming services',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                const CloseButton(),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final service in speshStreamingServices)
+                  Tooltip(
+                    message: service.name,
+                    child: SizedBox(
+                      width: 124,
+                      height: 100,
+                      child: TextButton(
+                        onPressed: () =>
+                            Navigator.of(context).pop(service.name),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            StreamingServiceIcon(service.name),
+                            const SizedBox(height: 10),
+                            FittedBox(
+                              child: Text(
+                                service.name,
+                                maxLines: 1,
+                                softWrap: false,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     ),
   );
@@ -129,62 +159,72 @@ class _StudioRemoteDialogState extends State<_StudioRemoteDialog> {
     content: SizedBox(
       width: 420,
       child: SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          for (final (index, service) in speshStreamingServices.indexed)
-            Focus(
-              onKeyEvent: (_, event) {
-                if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (index, service) in speshStreamingServices.indexed)
+              Focus(
+                onKeyEvent: (_, event) {
+                  if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                    return KeyEventResult.ignored;
+                  }
+                  final key = event.logicalKey;
+                  if (key == LogicalKeyboardKey.arrowDown ||
+                      key == LogicalKeyboardKey.arrowUp) {
+                    final next =
+                        (index + (key == LogicalKeyboardKey.arrowDown ? 1 : -1))
+                            .clamp(0, _nodes.length - 1);
+                    _nodes[next].requestFocus();
+                    return KeyEventResult.handled;
+                  }
+                  if (key == LogicalKeyboardKey.select ||
+                      key == LogicalKeyboardKey.enter ||
+                      key == LogicalKeyboardKey.gameButtonA) {
+                    if (event is KeyDownEvent) {
+                      Navigator.of(context).pop(service.name);
+                    }
+                    return KeyEventResult.handled;
+                  }
+                  if (key == LogicalKeyboardKey.escape ||
+                      key == LogicalKeyboardKey.goBack) {
+                    Navigator.of(context).pop();
+                    return KeyEventResult.handled;
+                  }
                   return KeyEventResult.ignored;
-                }
-                final key = event.logicalKey;
-                if (key == LogicalKeyboardKey.arrowDown ||
-                    key == LogicalKeyboardKey.arrowUp) {
-                  final next = (index +
-                      (key == LogicalKeyboardKey.arrowDown ? 1 : -1))
-                      .clamp(0, _nodes.length - 1);
-                  _nodes[next].requestFocus();
-                  return KeyEventResult.handled;
-                }
-                if (key == LogicalKeyboardKey.select ||
-                    key == LogicalKeyboardKey.enter ||
-                    key == LogicalKeyboardKey.gameButtonA) {
-                  if (event is KeyDownEvent) {
-                    Navigator.of(context).pop(service.name);
-                  }
-                  return KeyEventResult.handled;
-                }
-                if (key == LogicalKeyboardKey.escape ||
-                    key == LogicalKeyboardKey.goBack) {
-                  Navigator.of(context).pop();
-                  return KeyEventResult.handled;
-                }
-                return KeyEventResult.ignored;
-              },
-              child: TextButton(
-                focusNode: _nodes[index],
-                autofocus: index == 0,
-                onFocusChange: (focused) {
-                  final itemContext = _nodes[index].context;
-                  if (focused && itemContext != null) {
-                    Scrollable.ensureVisible(itemContext,
-                        alignment: 0.5, duration: Duration.zero);
-                  }
                 },
-                onPressed: () => Navigator.of(context).pop(service.name),
-                child: Row(children: [
-                  StreamingServiceIcon(service.name),
-                  const SizedBox(width: 16),
-                  Expanded(child: Text(service.name)),
-                ]),
+                child: TextButton(
+                  focusNode: _nodes[index],
+                  autofocus: index == 0,
+                  onFocusChange: (focused) {
+                    final itemContext = _nodes[index].context;
+                    if (focused && itemContext != null) {
+                      Scrollable.ensureVisible(
+                        itemContext,
+                        alignment: 0.5,
+                        duration: Duration.zero,
+                      );
+                    }
+                  },
+                  onPressed: () => Navigator.of(context).pop(service.name),
+                  child: Row(
+                    children: [
+                      StreamingServiceIcon(service.name),
+                      const SizedBox(width: 16),
+                      Expanded(child: Text(service.name)),
+                    ],
+                  ),
+                ),
               ),
-            ),
-        ]),
+          ],
+        ),
       ),
     ),
-    actions: [TextButton(
-      onPressed: () => Navigator.of(context).pop(),
-      child: const Text('Close'),
-    )],
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Close'),
+      ),
+    ],
   );
 }
 
@@ -193,7 +233,8 @@ bool isSpeshStudioRoute(String route) {
   final uri = Uri.tryParse(route);
   if (uri == null || uri.path != '/seerr/browse') return false;
   final query = uri.queryParameters;
-  return query['filterType'] == 'network' && query['mediaType'] == 'tv' &&
+  return query['filterType'] == 'network' &&
+      query['mediaType'] == 'tv' &&
       speshStreamingServices.any(
         (service) => '${service.networkId}' == query['filterId'],
       );

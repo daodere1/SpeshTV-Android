@@ -7,11 +7,14 @@ import '../../../../../data/services/seerr/seerr_api_models.dart';
 import '../../../../../preference/preference_constants.dart';
 import '../../../../../preference/user_preferences.dart';
 import '../../../../../util/focus/dpad_keys.dart';
+import '../../../../../util/platform_detection.dart';
 import '../../../../mixins/focus_state_mixin.dart';
 import '../../../../widgets/adaptive/sf_symbol.dart';
 import '../../../../widgets/focus/focus_theme.dart';
 import '../../../../widgets/focus/focusable_wrapper.dart';
+import '../../../../widgets/focus/context_menu_sheet.dart';
 import '../../../../widgets/media_card.dart';
+import '../../../../widgets/spesh_anime_badges.dart';
 import '../../../../widgets/offline_aware_image.dart';
 import '../../../../widgets/seerr/seerr_status_dot.dart';
 import '../../../../widgets/seerr_icons.dart';
@@ -46,9 +49,10 @@ SpotlightGridMetrics spotlightGridMetrics({
       .floor()
       .clamp(minColumns, maxColumns);
   double cellWidthWith(double gap) =>
-      ((maxWidth - gap * (columns - 1)) / columns)
-          .floorToDouble()
-          .clamp(0.0, maxCellWidth);
+      ((maxWidth - gap * (columns - 1)) / columns).floorToDouble().clamp(
+        0.0,
+        maxCellWidth,
+      );
   final spacing = focusExpansion
       ? MediaCard.focusGap(cellWidthWith(minSpacing), minimum: minSpacing)
       : minSpacing;
@@ -123,7 +127,7 @@ void spotlightScrollCellIntoView(BuildContext cellContext) {
 /// [MediaCard]s whose columns scale to width. D-pad uses geometric traversal
 /// and cards scroll into view on focus, so rows below the fold stay reachable
 /// inside the modal's scroll view.
-class SpotlightMediaGridSection extends StatelessWidget {
+class SpotlightMediaGridSection extends StatefulWidget {
   final List<AggregatedItem> items;
   final ImageApi imageApi;
   final UserPreferences prefs;
@@ -131,6 +135,7 @@ class SpotlightMediaGridSection extends StatelessWidget {
   final bool landscapeCells;
   final FocusNode? firstFocusNode;
   final ValueChanged<AggregatedItem> onItemTap;
+  final VoidCallback? onItemChanged;
   final Map<int, int>? seerrSeasonStatus;
   final String? currentItemId;
 
@@ -140,6 +145,7 @@ class SpotlightMediaGridSection extends StatelessWidget {
     required this.imageApi,
     required this.prefs,
     required this.onItemTap,
+    this.onItemChanged,
     this.aspectRatio = 2 / 3,
     this.landscapeCells = false,
     this.firstFocusNode,
@@ -148,8 +154,36 @@ class SpotlightMediaGridSection extends StatelessWidget {
   });
 
   @override
+  State<SpotlightMediaGridSection> createState() =>
+      _SpotlightMediaGridSectionState();
+}
+
+class _SpotlightMediaGridSectionState extends State<SpotlightMediaGridSection> {
+  bool _initialTargetChosen = false;
+  String? _initialTargetId;
+  List<AggregatedItem> get items => widget.items;
+  ImageApi get imageApi => widget.imageApi;
+  UserPreferences get prefs => widget.prefs;
+  double get aspectRatio => widget.aspectRatio;
+  bool get landscapeCells => widget.landscapeCells;
+  FocusNode? get firstFocusNode => widget.firstFocusNode;
+  ValueChanged<AggregatedItem> get onItemTap => widget.onItemTap;
+  VoidCallback? get onItemChanged => widget.onItemChanged;
+  Map<int, int>? get seerrSeasonStatus => widget.seerrSeasonStatus;
+  String? get currentItemId => widget.currentItemId;
+
+  @override
   Widget build(BuildContext context) {
     if (items.isEmpty) return const SizedBox.shrink();
+    // Choose once per opened grid. Watched flags, artwork and marker updates
+    // must not move the initial anchor to another episode while browsing.
+    if (!_initialTargetChosen) {
+      _initialTargetChosen = true;
+      final index = spotlightInitialEpisodeIndex(items, currentItemId);
+      if (index != null) _initialTargetId = items[index].id;
+    }
+    final target = items.indexWhere((item) => item.id == _initialTargetId);
+    final int? initialEpisode = target < 0 ? null : target;
     final isNeon = ThemeRegistry.active.id == ThemeRegistry.neonPulseId;
     final cardExpansion = prefs.get(UserPreferences.cardFocusExpansion);
     final focusColor = isNeon
@@ -157,8 +191,9 @@ class SpotlightMediaGridSection extends StatelessWidget {
         : Color(prefs.get(UserPreferences.focusColor).colorValue);
     final titleColor = isNeon ? AppColorScheme.accent : null;
     final watchedBehavior = prefs.get(UserPreferences.watchedIndicatorBehavior);
-    final showAvailabilityBadges =
-        prefs.get(UserPreferences.showSeerrAvailabilityBadges);
+    final showAvailabilityBadges = prefs.get(
+      UserPreferences.showSeerrAvailabilityBadges,
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -195,15 +230,16 @@ class SpotlightMediaGridSection extends StatelessWidget {
                     final isSeason = entry.type == 'Season';
                     final seasonSeerrStatus =
                         isSeason && entry.indexNumber != null
-                            ? (seerrSeasonStatus?[entry.indexNumber])
-                            : null;
+                        ? (seerrSeasonStatus?[entry.indexNumber])
+                        : null;
                     final hasSeasonSeerrDot =
                         showAvailabilityBadges &&
                         SeerrMediaStatus.hasDot(seasonSeerrStatus);
 
-                    return MediaCard(
+                    final card = MediaCard(
                       key: ValueKey(cellKeys[i]),
-                      title: entry.type == 'Episode' && entry.indexNumber != null
+                      title:
+                          entry.type == 'Episode' && entry.indexNumber != null
                           ? '${entry.indexNumber}${entry.rawData['IndexNumberEnd'] == null ? '' : '–${entry.rawData['IndexNumberEnd']}'} · ${entry.name}'
                           : entry.name,
                       subtitle: entry.personRole,
@@ -214,7 +250,9 @@ class SpotlightMediaGridSection extends StatelessWidget {
                       isPlayed: entry.isPlayed,
                       isFavorite: entry.isFavorite,
                       itemType: entry.type,
-                      focusNode: i == 0 ? firstFocusNode : null,
+                      focusNode: i == (initialEpisode ?? 0)
+                          ? firstFocusNode
+                          : null,
                       focusColor: focusColor,
                       cardFocusExpansion: cardExpansion,
                       suppressFocusGlow: isNeon,
@@ -224,6 +262,24 @@ class SpotlightMediaGridSection extends StatelessWidget {
                       seerrStatus: isSeerrItem ? entry.seerrStatus : null,
                       overlayOccupiesTopLeft: isSeerrItem || hasSeasonSeerrDot,
                       imageOverlays: [
+                        if (entry.type == 'Episode' || isSeason)
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            right: 36,
+                            child: IgnorePointer(
+                              child: isSeason
+                                  ? SpeshAnimeBadges(
+                                      seriesId: entry.seriesId,
+                                      itemId: entry.id,
+                                      season: true,
+                                    )
+                                  : SpeshAnimeItemAudioBadge(
+                                      seriesId: entry.seriesId,
+                                      itemId: entry.id,
+                                    ),
+                            ),
+                          ),
                         if (isSeerrItem)
                           const Positioned(
                             top: 6,
@@ -249,8 +305,9 @@ class SpotlightMediaGridSection extends StatelessWidget {
                                   border: Border.all(
                                     color: isNeon
                                         ? const Color(0xFF00FFFF)
-                                        : AppColorScheme.accent
-                                              .withValues(alpha: 0.7),
+                                        : AppColorScheme.accent.withValues(
+                                            alpha: 0.7,
+                                          ),
                                     width: 1.5,
                                   ),
                                 ),
@@ -260,7 +317,20 @@ class SpotlightMediaGridSection extends StatelessWidget {
                       ],
                       onFocus: () => spotlightScrollCellIntoView(cellContext),
                       onTap: () => onItemTap(entry),
+                      onLongPress: isSeerrItem || entry.type != 'Episode'
+                          ? null
+                          : () => showContextMenu(
+                              cellContext,
+                              entry,
+                              onChanged: onItemChanged,
+                            ),
                     );
+                    return i == initialEpisode
+                        ? _InitialEpisodeAnchor(
+                            focusNode: firstFocusNode,
+                            child: card,
+                          )
+                        : card;
                   },
                 ),
             ],
@@ -269,6 +339,54 @@ class SpotlightMediaGridSection extends StatelessWidget {
       },
     );
   }
+}
+
+/// Prefer the selected/resumable episode, then the first unwatched episode.
+/// Leave completed seasons at their beginning rather than jumping arbitrarily.
+int? spotlightInitialEpisodeIndex(
+  List<AggregatedItem> items,
+  String? currentId,
+) {
+  final episodes = items.indexWhere(
+    (e) => e.type == 'Episode' && e.id == currentId,
+  );
+  if (episodes >= 0) return episodes;
+  final resume = items.indexWhere(
+    (e) =>
+        e.type == 'Episode' &&
+        !e.isPlayed &&
+        (e.playbackPositionTicks ?? 0) > 0,
+  );
+  if (resume >= 0) return resume;
+  final next = items.indexWhere((e) => e.type == 'Episode' && !e.isPlayed);
+  if (next >= 0) return next;
+  final first = items.indexWhere((e) => e.type == 'Episode');
+  return first < 0 ? null : first;
+}
+
+class _InitialEpisodeAnchor extends StatefulWidget {
+  const _InitialEpisodeAnchor({required this.child, this.focusNode});
+  final Widget child;
+  final FocusNode? focusNode;
+  @override
+  State<_InitialEpisodeAnchor> createState() => _InitialEpisodeAnchorState();
+}
+
+class _InitialEpisodeAnchorState extends State<_InitialEpisodeAnchor> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? true)) return;
+      if (PlatformDetection.isTV && widget.focusNode?.context != null) {
+        widget.focusNode!.requestFocus();
+      }
+      Scrollable.ensureVisible(context, alignment: 0.3);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// Seerr discover grid for the Spotlight section modal: TMDB poster cells for
@@ -401,7 +519,8 @@ class SpotlightPeopleGridSection extends StatelessWidget {
                   final person = entries[i];
                   final personId = person['Id']?.toString();
                   final name = person['Name']?.toString() ?? '';
-                  final role = (person['Roles'] as Set<String>?)?.join(' · ') ??
+                  final role =
+                      (person['Roles'] as Set<String>?)?.join(' · ') ??
                       person['Role']?.toString();
                   final imageUrl = spotlightPersonImageUrl(
                     imageApi,
@@ -418,8 +537,9 @@ class SpotlightPeopleGridSection extends StatelessWidget {
                     imageUrl: imageUrl,
                     focusNode: i == 0 ? firstFocusNode : null,
                     onFocus: () => spotlightScrollCellIntoView(cellContext),
-                    onTap:
-                        personId == null ? null : () => onPersonTap(personId),
+                    onTap: personId == null
+                        ? null
+                        : () => onPersonTap(personId),
                   );
                 },
               ),

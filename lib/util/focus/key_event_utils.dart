@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'guide_select_gesture.dart';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -109,56 +111,27 @@ KeyEventResult consumeIfEdge(
 }
 
 class LongPressSelectKeyHandler {
-  bool _selectDownSeen = false;
-  bool _longPressFired = false;
-  Timer? _longPressTimer;
-
-  void dispose() {
-    _longPressTimer?.cancel();
-  }
-
+  VoidCallback? _tap, _held;
+  late final _gesture = GuideSelectGesture(
+    onSelect: () => _tap?.call(),
+    onHeld: () => _held?.call(),
+  );
+  void cancel() => _gesture.cancel();
+  void dispose() => _gesture.dispose();
   KeyEventResult handleKeyEvent(
     KeyEvent event, {
     required VoidCallback onTap,
     required VoidCallback onLongPress,
   }) {
-    final key = event.logicalKey;
-
-    if (key.isSelectKey) {
-      if (event is KeyDownEvent) {
-        _selectDownSeen = true;
-        _longPressFired = false;
-        _longPressTimer?.cancel();
-        _longPressTimer = Timer(const Duration(milliseconds: 500), () {
-          _longPressFired = true;
-          onLongPress();
-        });
-        return KeyEventResult.handled;
-      }
-      if (event is KeyRepeatEvent) {
-        return _selectDownSeen
-            ? KeyEventResult.handled
-            : KeyEventResult.ignored;
-      }
-      if (event is KeyUpEvent) {
-        if (!_selectDownSeen) return KeyEventResult.ignored;
-        _selectDownSeen = false;
-        _longPressTimer?.cancel();
-        _longPressTimer = null;
-        if (!_longPressFired) {
-          onTap();
-        }
-        _longPressFired = false;
-        return KeyEventResult.handled;
-      }
-    }
-
-    if (key.isContextMenuKey && event is KeyDownEvent) {
+    _tap = onTap;
+    _held = onLongPress;
+    if (event.logicalKey.isContextMenuKey && event is KeyDownEvent) {
+      cancel();
       onLongPress();
       return KeyEventResult.handled;
     }
-
-    return KeyEventResult.ignored;
+    if (!event.logicalKey.isSelectKey && event is KeyDownEvent) cancel();
+    return _gesture.handle(event);
   }
 }
 

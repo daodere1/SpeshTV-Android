@@ -604,6 +604,7 @@ class _MediaCardState extends State<MediaCard> with FocusStateMixin {
                 if (hasFocus) {
                   widget.onFocus?.call();
                 } else {
+                  _selectKeyHandler.cancel();
                   widget.onFocusLost?.call();
                 }
               },

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -63,7 +61,7 @@ class FocusableWrapper extends StatefulWidget {
     this.useBackgroundFocus = false,
     this.focusColor,
     this.enableLongPress = false,
-    this.longPressDuration = const Duration(milliseconds: 500),
+    this.longPressDuration = const Duration(milliseconds: 700),
     this.onKeyEvent,
     this.semanticLabel,
     this.suppressFocusGlow = false,
@@ -102,8 +100,7 @@ class _FocusableWrapperState extends State<FocusableWrapper>
   late Animation<double> _scaleAnimation;
   bool _focused = false;
   bool _hovered = false;
-  Timer? _longPressTimer;
-  bool _longPressFired = false;
+  final _selectGesture = LongPressSelectKeyHandler();
   late final GlobalKey _contentKey = GlobalKey();
 
   FocusNode get _node => widget.focusNode ?? (_ownedNode ??= FocusNode());
@@ -115,20 +112,22 @@ class _FocusableWrapperState extends State<FocusableWrapper>
       vsync: this,
       duration: FocusTheme.animationDuration,
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: FocusTheme.scale).animate(
-      CurvedAnimation(parent: _scaleController, curve: Curves.easeOut),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: FocusTheme.scale,
+    ).animate(CurvedAnimation(parent: _scaleController, curve: Curves.easeOut));
   }
 
   @override
   void dispose() {
-    _longPressTimer?.cancel();
+    _selectGesture.dispose();
     _scaleController.dispose();
     _ownedNode?.dispose();
     super.dispose();
   }
 
   void _handleFocusChange(bool hasFocus) {
+    if (!hasFocus) _selectGesture.cancel();
     if (_focused == hasFocus) return;
     setState(() => _focused = hasFocus);
     if (hasFocus && !widget.disableScale) {
@@ -182,28 +181,19 @@ class _FocusableWrapperState extends State<FocusableWrapper>
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent && !event.logicalKey.isSelectKey) {
+      _selectGesture.cancel();
+    }
     final override = widget.onKeyEvent?.call(node, event);
     if (override != null && override != KeyEventResult.ignored) return override;
 
     if (widget.enableLongPress && widget.onSelect != null) {
-      if (event is KeyDownEvent && event.logicalKey.isSelectKey) {
-        _longPressFired = false;
-        _longPressTimer?.cancel();
-        _longPressTimer = Timer(widget.longPressDuration, () {
-          _longPressFired = true;
-          widget.onLongPress?.call();
-        });
-        return KeyEventResult.handled;
-      }
-      if (event is KeyUpEvent && event.logicalKey.isSelectKey) {
-        _longPressTimer?.cancel();
-        _longPressTimer = null;
-        if (!_longPressFired) {
-          widget.onSelect!();
-        }
-        _longPressFired = false;
-        return KeyEventResult.handled;
-      }
+      final result = _selectGesture.handleKeyEvent(
+        event,
+        onTap: () => widget.onSelect?.call(),
+        onLongPress: () => widget.onLongPress?.call(),
+      );
+      if (result != KeyEventResult.ignored) return result;
     }
 
     if (widget.onBack != null) {

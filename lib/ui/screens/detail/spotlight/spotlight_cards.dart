@@ -230,8 +230,7 @@ class _SpotlightCardsBuilder {
 
   String get _personSortOption =>
       prefs.get(UserPreferences.personPageSortOption);
-  bool get _personGroupItems =>
-      prefs.get(UserPreferences.personPageGroupItems);
+  bool get _personGroupItems => prefs.get(UserPreferences.personPageGroupItems);
 
   List<AggregatedItem> _sortJellyfin(List<AggregatedItem> list) =>
       sortJellyfinFilmography(list, _personSortOption);
@@ -240,7 +239,9 @@ class _SpotlightCardsBuilder {
     List<SeerrDiscoverItem> list, {
     required bool isCrew,
   }) {
-    final grouped = _personGroupItems ? groupSeerrCredits(list, isCrew: isCrew) : list;
+    final grouped = _personGroupItems
+        ? groupSeerrCredits(list, isCrew: isCrew)
+        : list;
     return sortSeerrCredits(grouped, _personSortOption);
   }
 
@@ -286,10 +287,9 @@ class _SpotlightCardsBuilder {
         'file_details': _fileDetailsCard,
         'similar': _similarCard,
       },
-      'MusicAlbum' || 'AudioBook' || 'Book' => {
-        'tracks': _tracksCard,
-        'similar': _similarCard,
-      },
+      'MusicAlbum' ||
+      'AudioBook' ||
+      'Book' => {'tracks': _tracksCard, 'similar': _similarCard},
       'Playlist' => {'playlist': _playlistCard},
       'MusicArtist' => {'albums': _albumsCard, 'similar': _similarCard},
       'Person' => {
@@ -356,6 +356,7 @@ class _SpotlightCardsBuilder {
     bool landscapeCells = false,
     ValueChanged<AggregatedItem>? onTap,
     Map<int, int>? seerrSeasonStatus,
+    String? currentItemId,
   }) {
     return SpotlightModalSection(
       title: title,
@@ -369,6 +370,10 @@ class _SpotlightCardsBuilder {
         firstFocusNode: firstFocusNode,
         onItemTap: onTap ?? actions.openItem,
         seerrSeasonStatus: seerrSeasonStatus,
+        currentItemId: currentItemId,
+        onItemChanged: items.any((entry) => entry.type == 'Episode')
+            ? () => vm.refreshEpisodeLists()
+            : null,
       ),
     );
   }
@@ -385,7 +390,10 @@ class _SpotlightCardsBuilder {
       if (merged.containsKey(id)) {
         (merged[id]!['Roles'] as Set<String>).add(role);
       } else {
-        merged[id] = {...person, 'Roles': <String>{role}};
+        merged[id] = {
+          ...person,
+          'Roles': <String>{role},
+        };
       }
     }
 
@@ -518,8 +526,9 @@ class _SpotlightCardsBuilder {
     final mediaSource = selectedMediaSourceForItem(item, selectedMediaSourceId);
     if (mediaSource == null) return null;
 
-    final formattedSize =
-        formatMediaSourceSize(mediaSource['Size'] as int? ?? 0);
+    final formattedSize = formatMediaSourceSize(
+      mediaSource['Size'] as int? ?? 0,
+    );
     final String container =
         mediaSource['Container']?.toString().toUpperCase() ?? '';
 
@@ -684,7 +693,7 @@ class _SpotlightCardsBuilder {
                     ? seerrRecommendations
                     : seerrSimilar,
               ) ??
-            fallbackImageUrl);
+              fallbackImageUrl);
     // Named for where the list actually came from. The recommendation source
     // preference only applies to movies and series, and even then the view
     // model falls back to Jellyfin's own similar items when the chosen
@@ -796,8 +805,9 @@ class _SpotlightCardsBuilder {
       l10n.spotlightSeasonsCount(seasons.length),
       if (episodeCount > 0) l10n.spotlightEpisodesCount(episodeCount),
     ].join(' · ');
-    final modalTitle =
-        item.name.trim().isNotEmpty ? item.name.trim() : l10n.seasons;
+    final modalTitle = item.name.trim().isNotEmpty
+        ? item.name.trim()
+        : l10n.seasons;
     return SpotlightCardSpec(
       id: 'seasons',
       title: l10n.seasons,
@@ -840,6 +850,7 @@ class _SpotlightCardsBuilder {
           episodes,
           aspectRatio: 16 / 9,
           landscapeCells: true,
+          currentItemId: vm.nextUp?.id,
         ),
       ],
     );
@@ -855,17 +866,19 @@ class _SpotlightCardsBuilder {
     final episodes = allEpisodes.isNotEmpty ? allEpisodes : vm.episodes;
     if (episodes.isEmpty) return null;
 
-    final defaultSeason =
-        allEpisodes.isNotEmpty ? 0 : (item.parentIndexNumber ?? 1);
-    final sorted = [...episodes]..sort((a, b) {
-      final sa = a.parentIndexNumber ?? defaultSeason;
-      final sb = b.parentIndexNumber ?? defaultSeason;
-      if (sa != sb) return sa.compareTo(sb);
-      final ea = a.indexNumber ?? 0;
-      final eb = b.indexNumber ?? 0;
-      if (ea != eb) return ea.compareTo(eb);
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    });
+    final defaultSeason = allEpisodes.isNotEmpty
+        ? 0
+        : (item.parentIndexNumber ?? 1);
+    final sorted = [...episodes]
+      ..sort((a, b) {
+        final sa = a.parentIndexNumber ?? defaultSeason;
+        final sb = b.parentIndexNumber ?? defaultSeason;
+        if (sa != sb) return sa.compareTo(sb);
+        final ea = a.indexNumber ?? 0;
+        final eb = b.indexNumber ?? 0;
+        if (ea != eb) return ea.compareTo(eb);
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
 
     final Map<int, List<AggregatedItem>> seasonGroups = {};
     for (final ep in sorted) {
@@ -904,6 +917,7 @@ class _SpotlightCardsBuilder {
             firstFocusNode: firstFocusNode,
             onItemTap: actions.openItem,
             currentItemId: item.id,
+            onItemChanged: () => vm.refreshEpisodeLists(),
           ),
         ),
       );
@@ -1048,7 +1062,8 @@ class _SpotlightCardsBuilder {
         l10n.spotlightItemsCount(other.length),
     ].join(' · ');
 
-    final imageUrl = _personCardBackdrops['filmography'] ??
+    final imageUrl =
+        _personCardBackdrops['filmography'] ??
         _firstItemLandscape(movies) ??
         _firstItemLandscape(series) ??
         (other.isNotEmpty ? _firstItemLandscape(other) : null) ??
@@ -1074,7 +1089,8 @@ class _SpotlightCardsBuilder {
     final items = _prepareSeerr(seerrAppearances, isCrew: false);
     if (items.isEmpty) return null;
 
-    final imageUrl = _personCardBackdrops['appearances'] ??
+    final imageUrl =
+        _personCardBackdrops['appearances'] ??
         _firstSeerrPoster(items) ??
         fallbackImageUrl;
 
@@ -1084,13 +1100,7 @@ class _SpotlightCardsBuilder {
       subtitle: l10n.spotlightItemsCount(items.length),
       imageUrl: imageUrl,
       icon: Icons.star_outline,
-      sections: [
-        _seerrSection(
-          l10n.appearancesSeerr,
-          items,
-          showCredit: true,
-        ),
-      ],
+      sections: [_seerrSection(l10n.appearancesSeerr, items, showCredit: true)],
     );
   }
 
@@ -1099,7 +1109,8 @@ class _SpotlightCardsBuilder {
     final items = _prepareSeerr(seerrCrewCredits, isCrew: true);
     if (items.isEmpty) return null;
 
-    final imageUrl = _personCardBackdrops['crew'] ??
+    final imageUrl =
+        _personCardBackdrops['crew'] ??
         _firstSeerrPoster(items) ??
         fallbackImageUrl;
 
@@ -1110,11 +1121,7 @@ class _SpotlightCardsBuilder {
       imageUrl: imageUrl,
       icon: Icons.movie_creation_outlined,
       sections: [
-        _seerrSection(
-          l10n.crewContributionsSeerr,
-          items,
-          showCredit: true,
-        ),
+        _seerrSection(l10n.crewContributionsSeerr, items, showCredit: true),
       ],
     );
   }
@@ -1183,8 +1190,7 @@ class _SpotlightCardsBuilder {
       for (final p in people) {
         if (p is! Map) continue;
         final person = Map<String, dynamic>.from(p);
-        final id =
-            person['Id']?.toString() ?? person['Name']?.toString() ?? '';
+        final id = person['Id']?.toString() ?? person['Name']?.toString() ?? '';
         if (id.isEmpty) continue;
         if (person['Type']?.toString() == 'Actor') {
           if (showCast) cast.putIfAbsent(id, () => person);
@@ -1236,7 +1242,9 @@ class _SpotlightCardsBuilder {
       subtitle: l10n.spotlightItemsCount(tracks.length),
       // Prefers art that differs from the Movies & Shows card beside it.
       imageUrl:
-          trackImageUrls.where((url) => url != collectionImageUrl).firstOrNull ??
+          trackImageUrls
+              .where((url) => url != collectionImageUrl)
+              .firstOrNull ??
           trackImageUrls.firstOrNull ??
           fallbackImageUrl,
       icon: Icons.format_list_numbered,
@@ -1278,9 +1286,9 @@ class _SpotlightCardsBuilder {
                         getCollectionSortLabel(vm.collectionSort, l10n),
                       ),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.white70,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        color: Colors.white70,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
@@ -1301,7 +1309,9 @@ class _SpotlightCardsBuilder {
               onPlayTrack: (index) => hasPlaylistItems
                   ? actions.playPlaylistTrack(index)
                   : actions.openItem(tracks[index]),
-              reorderable: hasPlaylistItems && vm.collectionSort == CollectionSortOption.custom,
+              reorderable:
+                  hasPlaylistItems &&
+                  vm.collectionSort == CollectionSortOption.custom,
               onReorder: hasPlaylistItems
                   ? (oldIndex, newIndex) {
                       var target = newIndex;
@@ -1313,13 +1323,14 @@ class _SpotlightCardsBuilder {
                   : null,
               onMoveUp: hasPlaylistItems
                   ? (index) =>
-                      vm.reorderCollectionPlaylistItem(index, index - 1)
+                        vm.reorderCollectionPlaylistItem(index, index - 1)
                   : null,
               onMoveDown: hasPlaylistItems
                   ? (index) =>
-                      vm.reorderCollectionPlaylistItem(index, index + 1)
+                        vm.reorderCollectionPlaylistItem(index, index + 1)
                   : null,
-              onFirstTrackUp: () => actions.collectionSortFocusNode?.requestFocus(),
+              onFirstTrackUp: () =>
+                  actions.collectionSortFocusNode?.requestFocus(),
             );
           },
         ),

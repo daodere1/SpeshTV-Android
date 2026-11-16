@@ -125,14 +125,13 @@ class ParentCollection {
         missingItems: missing,
       );
 
-  ParentCollection withItems(List<AggregatedItem> updated) =>
-      ParentCollection(
-        id: id,
-        name: name,
-        boxSetItem: boxSetItem,
-        items: updated,
-        missingItems: missingItems,
-      );
+  ParentCollection withItems(List<AggregatedItem> updated) => ParentCollection(
+    id: id,
+    name: name,
+    boxSetItem: boxSetItem,
+    items: updated,
+    missingItems: missingItems,
+  );
 }
 
 /// Where the detail page's similar-titles list came from, so a section can be
@@ -266,7 +265,10 @@ class ItemDetailViewModel extends ChangeNotifier {
   set selectedSubtitleIndex(int? value) {
     if (_selectedSubtitleIndex != value) {
       _selectedSubtitleIndex = value;
-      GetIt.instance<UserPreferences>().setItemSubtitleStreamIndex(itemId, value);
+      GetIt.instance<UserPreferences>().setItemSubtitleStreamIndex(
+        itemId,
+        value,
+      );
       notifyListeners();
     }
   }
@@ -378,7 +380,13 @@ class ItemDetailViewModel extends ChangeNotifier {
   static const _indexScanBatchSize = 8;
 
   /// Member types that play on their own. A series is swapped for its episodes.
-  static const _playableTypes = {'Movie', 'Audio', 'Video', 'MusicVideo', 'Episode'};
+  static const _playableTypes = {
+    'Movie',
+    'Audio',
+    'Video',
+    'MusicVideo',
+    'Episode',
+  };
 
   /// True while the index is being built. The playlist area shows a spinner.
   bool _playlistIndexBuilding = false;
@@ -582,8 +590,8 @@ class ItemDetailViewModel extends ChangeNotifier {
           );
           lookupId =
               (seriesItem.tmdbId != null && seriesItem.tmdbId!.isNotEmpty)
-                  ? seriesItem.tmdbId
-                  : seriesItem.imdbId;
+              ? seriesItem.tmdbId
+              : seriesItem.imdbId;
           mediaType = 'tv';
           title = seriesItem.name;
         } catch (_) {}
@@ -595,11 +603,7 @@ class ItemDetailViewModel extends ChangeNotifier {
     try {
       final vm = await _ensureSeerr();
       if (_isDisposed) return;
-      await vm.load(
-        lookupId,
-        mediaType,
-        title: title,
-      );
+      await vm.load(lookupId, mediaType, title: title);
     } catch (_) {}
   }
 
@@ -807,7 +811,9 @@ class ItemDetailViewModel extends ChangeNotifier {
       'PremiereDate': s.releaseDate ?? s.firstAirDate,
       'CommunityRating': s.voteAverage,
       'Genres': [for (final g in s.genres) g.name],
-      'Studios': [for (final n in s.networks) {'Name': n.name}],
+      'Studios': [
+        for (final n in s.networks) {'Name': n.name},
+      ],
       'Taglines': [?s.tagline],
       'People': [
         for (final c in s.credits?.cast ?? const [])
@@ -833,19 +839,19 @@ class ItemDetailViewModel extends ChangeNotifier {
   }
 
   List<AggregatedItem> _seerrSeasons(SeerrMediaDetailState s) => [
-        for (final season in s.tv?.seasons ?? const [])
-          if (season.seasonNumber > 0)
-            AggregatedItem(
-              id: '$itemId:s${season.seasonNumber}',
-              serverId: 'seerr',
-              rawData: {
-                'Name': season.name ?? '',
-                'Type': 'Season',
-                'IndexNumber': season.seasonNumber,
-                'ChildCount': season.episodeCount,
-              },
-            ),
-      ];
+    for (final season in s.tv?.seasons ?? const [])
+      if (season.seasonNumber > 0)
+        AggregatedItem(
+          id: '$itemId:s${season.seasonNumber}',
+          serverId: 'seerr',
+          rawData: {
+            'Name': season.name ?? '',
+            'Type': 'Season',
+            'IndexNumber': season.seasonNumber,
+            'ChildCount': season.episodeCount,
+          },
+        ),
+  ];
 
   Future<void> load({String? mediaSourceId}) async {
     final loadTimer = Stopwatch()..start();
@@ -937,7 +943,10 @@ class ItemDetailViewModel extends ChangeNotifier {
           } catch (_) {}
         }
       } else {
-        final data = await _client.itemsApi.getItem(itemId, mediaSourceId: mediaSourceId);
+        final data = await _client.itemsApi.getItem(
+          itemId,
+          mediaSourceId: mediaSourceId,
+        );
         final candidate = AggregatedItem(
           id: itemId,
           serverId: _serverId ?? _client.baseUrl,
@@ -1022,7 +1031,8 @@ class ItemDetailViewModel extends ChangeNotifier {
         ).toJson(),
         userId: _client.userId,
       );
-      final probed = (info['MediaSources'] as List?)
+      final probed =
+          (info['MediaSources'] as List?)
               ?.whereType<Map>()
               .map((e) => e.cast<String, dynamic>())
               .where((s) => (s['MediaStreams'] as List?)?.isNotEmpty ?? false)
@@ -1079,7 +1089,9 @@ class ItemDetailViewModel extends ChangeNotifier {
       // Deliberately not awaited, so a slow Seerr server never holds the
       // collection's own members back.
       unawaited(_loadBoxSetSeerrItems());
-      futures.add(_buildPlaylistIndex());  // playlist — Phase 1, runs concurrently
+      futures.add(
+        _buildPlaylistIndex(),
+      ); // playlist — Phase 1, runs concurrently
     } else if (type == 'MusicVideo' ||
         type == 'Movie' ||
         type == 'Trailer' ||
@@ -1119,15 +1131,19 @@ class ItemDetailViewModel extends ChangeNotifier {
   }
 
   /// Fetch a browsed season without replacing the series detail behind it.
-  Future<List<AggregatedItem>> browseSeasonEpisodes(AggregatedItem season) async {
+  Future<List<AggregatedItem>> browseSeasonEpisodes(
+    AggregatedItem season,
+  ) async {
     final seriesId = season.seriesId ?? _item?.seriesId ?? itemId;
     final data = await _client.itemsApi.getEpisodes(
       seriesId,
       seasonId: season.id,
       fields: _episodeOverviewFields,
     );
-    return _mapItems((data['Items'] as List?) ?? [],
-        fallbackRating: _item?.officialRating);
+    return _mapItems(
+      (data['Items'] as List?) ?? [],
+      fallbackRating: _item?.officialRating,
+    );
   }
 
   Future<void> _loadEpisodes() async {
@@ -1192,10 +1208,7 @@ class ItemDetailViewModel extends ChangeNotifier {
         fields: _episodeOverviewFields,
       );
       final items = (data['Items'] as List?) ?? [];
-      _seriesEpisodes = _mapItems(
-        items,
-        fallbackRating: _item?.officialRating,
-      );
+      _seriesEpisodes = _mapItems(items, fallbackRating: _item?.officialRating);
       _seriesEpisodesLoaded = true;
       notifyListeners();
     } catch (_) {
@@ -1212,15 +1225,22 @@ class ItemDetailViewModel extends ChangeNotifier {
     return loadAllSeriesEpisodes();
   }
 
+  /// Refetch episode user data and image tags while retaining the detail route.
+  Future<void> refreshEpisodeLists() async {
+    final refreshAll = _seriesEpisodesLoaded || _seriesEpisodesRequested;
+    await Future.wait([
+      _loadEpisodes(),
+      if (refreshAll) refreshSeriesEpisodes(),
+    ]);
+  }
+
   Future<void> _loadNextUp() async {
     final previousId = _nextUp?.id;
     AggregatedItem? nextUp;
     try {
-      final data = await _client.itemsApi.getNextUp(
-        seriesId: itemId,
-        limit: 1,
-        fields: _episodeOverviewFields,
-      ).timeout(const Duration(seconds: 8));
+      final data = await _client.itemsApi
+          .getNextUp(seriesId: itemId, limit: 1, fields: _episodeOverviewFields)
+          .timeout(const Duration(seconds: 8));
       final items = (data['Items'] as List?) ?? [];
       if (items.isNotEmpty) {
         final raw = items.first as Map<String, dynamic>;
@@ -1743,8 +1763,7 @@ class ItemDetailViewModel extends ChangeNotifier {
     final candidates = <int>[
       for (final member in members)
         if (member.type == 'Movie')
-          if (int.tryParse(member.tmdbId ?? '') case final id? when id > 0)
-            id,
+          if (int.tryParse(member.tmdbId ?? '') case final id? when id > 0) id,
     ].take(maxProbes).toList();
     const maxConcurrent = 4;
     for (var i = 0; i < candidates.length; i += maxConcurrent) {
@@ -1814,10 +1833,11 @@ class ItemDetailViewModel extends ChangeNotifier {
             _customOrderIds = customOrder;
             await _ensurePlaylistIndexEntries();
             final customSet = customOrder.toSet();
-            final remaining = (_playlistIndexEntries ?? [])
-                .where((e) => !customSet.contains(e.id))
-                .toList()
-              ..sort(_PlaylistItemIndexEntry.compareReleaseAscending);
+            final remaining =
+                (_playlistIndexEntries ?? [])
+                    .where((e) => !customSet.contains(e.id))
+                    .toList()
+                  ..sort(_PlaylistItemIndexEntry.compareReleaseAscending);
             final seenIds = <String>{};
             _flattenedIds = [
               for (final id in [...customOrder, ...remaining.map((e) => e.id)])
@@ -1958,8 +1978,9 @@ class ItemDetailViewModel extends ChangeNotifier {
     // The by-id endpoint answers in whatever order it likes.
     final orderMap = {for (var i = 0; i < batch.length; i++) batch[i]: i};
     items.sort(
-      (a, b) => (orderMap[a.id] ?? batch.length)
-          .compareTo(orderMap[b.id] ?? batch.length),
+      (a, b) => (orderMap[a.id] ?? batch.length).compareTo(
+        orderMap[b.id] ?? batch.length,
+      ),
     );
 
     _playlistFetchedCount += batch.length;
@@ -2120,7 +2141,8 @@ class ItemDetailViewModel extends ChangeNotifier {
     }
 
     try {
-      final Map<String, ({String name, Map<String, dynamic> rawData})> boxSetInfo = {};
+      final Map<String, ({String name, Map<String, dynamic> rawData})>
+      boxSetInfo = {};
       final ancestors = await _client.itemsApi.getAncestors(item.id);
       if (_isDisposed) return;
       for (final ancestor in ancestors) {
@@ -2142,8 +2164,12 @@ class ItemDetailViewModel extends ChangeNotifier {
       // Reverse membership discovery otherwise fetches every collection's
       // children on every detail open, starving visible metadata and artwork.
       // SpeshTV uses server-reported ancestors; collection browsing is unchanged.
-      if (!const bool.fromEnvironment('SPESHMEDIA_CLIENT', defaultValue: true)) {
-        final scannedCollections = await _findParentCollectionsByScanningBoxSets(item.id);
+      if (!const bool.fromEnvironment(
+        'SPESHMEDIA_CLIENT',
+        defaultValue: true,
+      )) {
+        final scannedCollections =
+            await _findParentCollectionsByScanningBoxSets(item.id);
         if (_isDisposed) return;
         boxSetInfo.addAll(scannedCollections);
       }
@@ -2219,8 +2245,10 @@ class ItemDetailViewModel extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, ({String name, Map<String, dynamic> rawData})>> _findParentCollectionsByScanningBoxSets(String itemId) async {
-    final Map<String, ({String name, Map<String, dynamic> rawData})> result = {};
+  Future<Map<String, ({String name, Map<String, dynamic> rawData})>>
+  _findParentCollectionsByScanningBoxSets(String itemId) async {
+    final Map<String, ({String name, Map<String, dynamic> rawData})> result =
+        {};
     try {
       const pageSize = 200;
       var startIndex = 0;
@@ -2241,7 +2269,8 @@ class ItemDetailViewModel extends ChangeNotifier {
           break;
         }
 
-        final candidates = <({String id, String name, Map<String, dynamic> rawData})>[];
+        final candidates =
+            <({String id, String name, Map<String, dynamic> rawData})>[];
         for (final raw in boxSets.whereType<Map>()) {
           final boxSet = raw.cast<String, dynamic>();
           final boxSetId = boxSet['Id']?.toString();
@@ -2258,23 +2287,25 @@ class ItemDetailViewModel extends ChangeNotifier {
         for (var i = 0; i < candidates.length; i += maxConcurrent) {
           if (_isDisposed) return result;
           final batch = candidates.skip(i).take(maxConcurrent);
-          await Future.wait(batch.map((candidate) async {
-            final membership = await _client.itemsApi.getItems(
-              parentId: candidate.id,
-              fields: 'BasicSyncInfo',
-            );
-            final members = (membership['Items'] as List?) ?? const [];
-            final hasItem = members.whereType<Map>().any((entry) {
-              final map = entry.cast<String, dynamic>();
-              return map['Id'] == itemId;
-            });
-            if (hasItem) {
-              result[candidate.id] = (
-                name: candidate.name,
-                rawData: candidate.rawData,
+          await Future.wait(
+            batch.map((candidate) async {
+              final membership = await _client.itemsApi.getItems(
+                parentId: candidate.id,
+                fields: 'BasicSyncInfo',
               );
-            }
-          }));
+              final members = (membership['Items'] as List?) ?? const [];
+              final hasItem = members.whereType<Map>().any((entry) {
+                final map = entry.cast<String, dynamic>();
+                return map['Id'] == itemId;
+              });
+              if (hasItem) {
+                result[candidate.id] = (
+                  name: candidate.name,
+                  rawData: candidate.rawData,
+                );
+              }
+            }),
+          );
         }
 
         if (boxSets.length < pageSize) {
@@ -2327,12 +2358,10 @@ class ItemDetailViewModel extends ChangeNotifier {
     final parts = _loadAdditionalParts();
     try {
       final items = await _client.itemsApi.getSpecialFeatures(itemId);
-      final mapped = _mapItems(items).where((item) => item.id != itemId).toList()
-        ..sort(compareFeatures);
-      _features = [
-        ...await parts,
-        ...mapped,
-      ];
+      final mapped = _mapItems(
+        items,
+      ).where((item) => item.id != itemId).toList()..sort(compareFeatures);
+      _features = [...await parts, ...mapped];
       notifyListeners();
     } catch (_) {
       _features = await parts;
@@ -2356,7 +2385,8 @@ class ItemDetailViewModel extends ChangeNotifier {
 
   Future<void> _loadFilmography() async {
     try {
-      final localId = _localPersonId ?? (itemId.startsWith('tmdb:') ? null : itemId);
+      final localId =
+          _localPersonId ?? (itemId.startsWith('tmdb:') ? null : itemId);
       if (localId == null) {
         _filmography = const [];
         notifyListeners();
@@ -2396,9 +2426,8 @@ class ItemDetailViewModel extends ChangeNotifier {
     if (!getIt.isRegistered<PluginSyncService>() ||
         !getIt<PluginSyncService>().tmdbPersonLinksAvailable ||
         !DetailSection.personLinks.isOffered ||
-        !DetailSectionVisibility.of(
-          getIt<UserPreferences>(),
-        ).shows(DetailSection.personLinks)) {
+        !DetailSectionVisibility.of(getIt<UserPreferences>())
+            .shows(DetailSection.personLinks)) {
       return;
     }
     final accounts = await _tmdbRepository.getPersonAccounts(tmdbId);
@@ -2412,9 +2441,8 @@ class ItemDetailViewModel extends ChangeNotifier {
     final tmdbId = item?.tmdbId;
     if (item == null || tmdbId == null || tmdbId.isEmpty) return;
     if (!DetailSection.reviews.isOffered ||
-        !DetailSectionVisibility.of(
-          GetIt.instance<UserPreferences>(),
-        ).shows(DetailSection.reviews)) {
+        !DetailSectionVisibility.of(GetIt.instance<UserPreferences>())
+            .shows(DetailSection.reviews)) {
       return;
     }
     final reviews = await _tmdbRepository.getReviews(
@@ -2467,7 +2495,9 @@ class ItemDetailViewModel extends ChangeNotifier {
                   return;
                 }
               } catch (e) {
-                debugPrint('[ItemDetailViewModel] Moonbase server recommendation failed, falling back to local: $e');
+                debugPrint(
+                  '[ItemDetailViewModel] Moonbase server recommendation failed, falling back to local: $e',
+                );
               }
             }
           }
@@ -2487,16 +2517,23 @@ class ItemDetailViewModel extends ChangeNotifier {
           // falls through to Jellyfin's similar-items below.
           if (recommended.isNotEmpty) {
             _similar = recommended;
-            _similarSource = isLocal ? SimilarSource.moonfin : SimilarSource.tmdb;
+            _similarSource = isLocal
+                ? SimilarSource.moonfin
+                : SimilarSource.tmdb;
             return;
           }
         } catch (e) {
-          debugPrint('[ItemDetailViewModel] Custom recommendation system failed: $e');
+          debugPrint(
+            '[ItemDetailViewModel] Custom recommendation system failed: $e',
+          );
         }
       }
 
       try {
-        final data = await _client.itemsApi.getSimilarItems(itemId, limit: _similarLimit);
+        final data = await _client.itemsApi.getSimilarItems(
+          itemId,
+          limit: _similarLimit,
+        );
         final items = (data['Items'] as List?) ?? [];
         _similar = _mapItems(items);
         _similarSource = SimilarSource.jellyfin;
@@ -2521,7 +2558,8 @@ class ItemDetailViewModel extends ChangeNotifier {
       if (seriesId != null && season != null && episode != null) {
         try {
           final seriesData = await _client.itemsApi.getItem(seriesId);
-          final seriesTmdbId = (seriesData['ProviderIds'] as Map?)?['Tmdb']?.toString();
+          final seriesTmdbId = (seriesData['ProviderIds'] as Map?)?['Tmdb']
+              ?.toString();
           if (seriesTmdbId != null && seriesTmdbId.isNotEmpty) {
             final rating = await _tmdbRepository.getEpisodeRating(
               tmdbId: seriesTmdbId,
@@ -2538,8 +2576,9 @@ class ItemDetailViewModel extends ChangeNotifier {
       return;
     }
 
-    if (!GetIt.instance<UserPreferences>()
-        .get(UserPreferences.enableAdditionalRatings)) {
+    if (!GetIt.instance<UserPreferences>().get(
+      UserPreferences.enableAdditionalRatings,
+    )) {
       return;
     }
 
@@ -2581,7 +2620,9 @@ class ItemDetailViewModel extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('[ItemDetailViewModel] Upcoming episode resolution failed: $e');
+      debugPrint(
+        '[ItemDetailViewModel] Upcoming episode resolution failed: $e',
+      );
     }
   }
 
@@ -2612,30 +2653,26 @@ class ItemDetailViewModel extends ChangeNotifier {
   }
 
   Future<void> setThumbRating(bool likes) async {
-    return _mutateRating(
-      {'Likes': likes},
-      () => _mutations.setRating(itemId, likes: likes),
-    );
+    return _mutateRating({
+      'Likes': likes,
+    }, () => _mutations.setRating(itemId, likes: likes));
   }
 
   Future<void> setNumericRating(double rating) async {
     if (!rating.isFinite || rating < 0 || rating > 10) {
       throw ArgumentError.value(rating, 'rating', 'must be between 0 and 10');
     }
-    return _mutateRating(
-      {
-        'Rating': rating,
-        'Likes': rating >= AggregatedItem.likedRatingThreshold,
-      },
-      () => _mutations.setNumericRating(itemId, rating: rating),
-    );
+    return _mutateRating({
+      'Rating': rating,
+      'Likes': rating >= AggregatedItem.likedRatingThreshold,
+    }, () => _mutations.setNumericRating(itemId, rating: rating));
   }
 
   Future<void> clearRating() async {
-    return _mutateRating(
-      {'Rating': null, 'Likes': null},
-      () => _mutations.clearRating(itemId),
-    );
+    return _mutateRating({
+      'Rating': null,
+      'Likes': null,
+    }, () => _mutations.clearRating(itemId));
   }
 
   Future<void> _mutateRating(
@@ -2738,23 +2775,30 @@ class ItemDetailViewModel extends ChangeNotifier {
 
   AggregatedItem? _peopleOwner;
   List<Map<String, dynamic>> _cachedDirectors = const [],
-      _cachedWriters = const [], _cachedActors = const [];
+      _cachedWriters = const [],
+      _cachedActors = const [];
 
   void _ensurePeople() {
     if (identical(_peopleOwner, _item)) return;
     _peopleOwner = _item;
     final list = _item?.people ?? const <Map<String, dynamic>>[];
-    _cachedDirectors = List.unmodifiable(list.where((p) => p['Type'] == 'Director'));
-    _cachedWriters = List.unmodifiable(list.where((p) => p['Type'] == 'Writer'));
+    _cachedDirectors = List.unmodifiable(
+      list.where((p) => p['Type'] == 'Director'),
+    );
+    _cachedWriters = List.unmodifiable(
+      list.where((p) => p['Type'] == 'Writer'),
+    );
     final dirNames = _cachedDirectors.map((d) => d['Name'] as String?).toSet();
     final writNames = _cachedWriters.map((w) => w['Name'] as String?).toSet();
-    _cachedActors = List.unmodifiable(list.where((p) {
-      final type = p['Type'] as String?;
-      if (type != 'Actor' && type != 'GuestStar') return false;
-      final name = p['Name'] as String?;
-      if (dirNames.contains(name) || writNames.contains(name)) return false;
-      return true;
-    }));
+    _cachedActors = List.unmodifiable(
+      list.where((p) {
+        final type = p['Type'] as String?;
+        if (type != 'Actor' && type != 'GuestStar') return false;
+        final name = p['Name'] as String?;
+        if (dirNames.contains(name) || writNames.contains(name)) return false;
+        return true;
+      }),
+    );
   }
 
   List<AggregatedItem> get filmographyMovies =>
