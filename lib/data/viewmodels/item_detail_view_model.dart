@@ -215,6 +215,7 @@ List<AggregatedItem> seerrMissingCollectionItems({
 }
 
 class ItemDetailViewModel extends ChangeNotifier {
+  bool _spotlightDisposed = false;
   static const _episodeOverviewFields =
       'Overview,RunTimeTicks,UserData,ProviderIds,Genres,Studios,People';
 
@@ -1132,18 +1133,76 @@ class ItemDetailViewModel extends ChangeNotifier {
 
   /// Fetch a browsed season without replacing the series detail behind it.
   Future<List<AggregatedItem>> browseSeasonEpisodes(
-    AggregatedItem season,
-  ) async {
+    AggregatedItem season, {
+    bool forceRefresh = false,
+  }) async {
     final seriesId = season.seriesId ?? _item?.seriesId ?? itemId;
+    final sameContext =
+        season.serverId == _item?.serverId &&
+        seriesId == (_item?.seriesId ?? itemId);
+    if (!forceRefresh && sameContext) {
+      if (_seriesEpisodesLoaded)
+        return episodesForSpotlightSeason(
+          _seriesEpisodes,
+          season,
+          fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
+        );
+      final loaded = episodesForSpotlightSeason(
+        _episodes,
+        season,
+        fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
+      );
+      if (_episodesLoaded && loaded.isNotEmpty) return loaded;
+    }
+    final synthetic = season.rawData['_speshSyntheticSeason'] == true;
     final data = await _client.itemsApi.getEpisodes(
       seriesId,
-      seasonId: season.id,
+      seasonId: synthetic ? null : season.id,
       fields: _episodeOverviewFields,
     );
-    return _mapItems(
+    final mapped = _mapItems(
       (data['Items'] as List?) ?? [],
       fallbackRating: _item?.officialRating,
     );
+    return synthetic
+        ? episodesForSpotlightSeason(
+            mapped,
+            season,
+            fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
+          )
+        : mapped;
+  }
+
+  Future<List<AggregatedItem>> refreshBrowsedSeason(
+    AggregatedItem season,
+  ) async {
+    final contextItem = _item;
+    final fresh = await browseSeasonEpisodes(season, forceRefresh: true);
+    if (_spotlightDisposed || !identical(contextItem, _item)) return fresh;
+    if (_seriesEpisodesLoaded) {
+      _seriesEpisodes =
+          [
+            ..._seriesEpisodes.where(
+              (entry) => episodesForSpotlightSeason(
+                [entry],
+                season,
+                fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
+              ).isEmpty,
+            ),
+            ...fresh,
+          ]..sort((a, b) {
+            final seasonOrder = (a.parentIndexNumber ?? 0).compareTo(
+              b.parentIndexNumber ?? 0,
+            );
+            return seasonOrder != 0
+                ? seasonOrder
+                : (a.indexNumber ?? 0).compareTo(b.indexNumber ?? 0);
+          });
+    }
+    final byId = {for (final entry in fresh) entry.id: entry};
+    _episodes = _episodes.map((entry) => byId[entry.id] ?? entry).toList();
+    notifyListeners();
+    return fresh;
   }
 
   Future<void> _loadEpisodes() async {
@@ -2821,6 +2880,7 @@ class ItemDetailViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _spotlightDisposed = true;
     _isDisposed = true;
     userDataSync.removeListener(_onUserDataChanged);
     // The child owns a download poll timer, so this is what stops it.
@@ -2830,3 +2890,18 @@ class ItemDetailViewModel extends ChangeNotifier {
     super.dispose();
   }
 }
+
+List<AggregatedItem> episodesForSpotlightSeason(
+  List<AggregatedItem> episodes,
+  AggregatedItem season, {
+  int fallbackSeasonNumber = 1,
+}) => episodes
+    .where(
+      (episode) =>
+          episode.seasonId != null &&
+              season.rawData['_speshSyntheticSeason'] != true
+          ? episode.seasonId == season.id
+          : (episode.parentIndexNumber ?? fallbackSeasonNumber) ==
+                season.indexNumber,
+    )
+    .toList();

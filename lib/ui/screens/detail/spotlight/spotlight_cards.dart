@@ -36,6 +36,7 @@ import '../modern/modern_detail_content.dart'
 import 'spotlight_images.dart';
 import 'widgets/spotlight_file_details_section.dart';
 import 'widgets/spotlight_modal_grids.dart';
+import 'widgets/spotlight_virtual_episode_grid.dart';
 import 'widgets/spotlight_section_modal.dart';
 
 /// The item-level actions a Spotlight summary card's modal content can invoke.
@@ -361,20 +362,33 @@ class _SpotlightCardsBuilder {
     return SpotlightModalSection(
       title: title,
       count: items.length,
-      builder: (context, firstFocusNode) => SpotlightMediaGridSection(
-        items: items,
-        imageApi: _imageApi,
-        prefs: prefs,
-        aspectRatio: aspectRatio,
-        landscapeCells: landscapeCells,
-        firstFocusNode: firstFocusNode,
-        onItemTap: onTap ?? actions.openItem,
-        seerrSeasonStatus: seerrSeasonStatus,
-        currentItemId: currentItemId,
-        onItemChanged: items.any((entry) => entry.type == 'Episode')
-            ? () => vm.refreshEpisodeLists()
-            : null,
-      ),
+      fillsViewport:
+          items.isNotEmpty && items.every((entry) => entry.type == 'Episode'),
+      builder: (context, firstFocusNode) =>
+          items.isNotEmpty && items.every((entry) => entry.type == 'Episode')
+          ? SpotlightVirtualEpisodeGrid(
+              items: items,
+              imageApi: _imageApi,
+              prefs: prefs,
+              firstFocusNode: firstFocusNode,
+              currentItemId: currentItemId,
+              onItemTap: onTap ?? actions.openItem,
+              onItemChanged: () => vm.refreshEpisodeLists(),
+            )
+          : SpotlightMediaGridSection(
+              items: items,
+              imageApi: _imageApi,
+              prefs: prefs,
+              aspectRatio: aspectRatio,
+              landscapeCells: landscapeCells,
+              firstFocusNode: firstFocusNode,
+              onItemTap: onTap ?? actions.openItem,
+              seerrSeasonStatus: seerrSeasonStatus,
+              currentItemId: currentItemId,
+              onItemChanged: items.any((entry) => entry.type == 'Episode')
+                  ? () => vm.refreshEpisodeLists()
+                  : null,
+            ),
     );
   }
 
@@ -857,87 +871,31 @@ class _SpotlightCardsBuilder {
   }
 
   SpotlightCardSpec? _episodeMoreEpisodesCard() {
-    // Checked ahead of the load, so a hidden card doesn't fetch every season.
     if (!_shows(DetailSection.moreEpisodes)) return null;
-    if (item.seriesId != null && !vm.seriesEpisodesLoaded) {
+    if (item.seriesId != null && !vm.seriesEpisodesLoaded)
       vm.loadAllSeriesEpisodes();
-    }
-    final allEpisodes = vm.seriesEpisodes;
-    final episodes = allEpisodes.isNotEmpty ? allEpisodes : vm.episodes;
+    final episodes = vm.seriesEpisodes.isNotEmpty
+        ? vm.seriesEpisodes
+        : vm.episodes;
     if (episodes.isEmpty) return null;
-
-    final defaultSeason = allEpisodes.isNotEmpty
-        ? 0
-        : (item.parentIndexNumber ?? 1);
-    final sorted = [...episodes]
-      ..sort((a, b) {
-        final sa = a.parentIndexNumber ?? defaultSeason;
-        final sb = b.parentIndexNumber ?? defaultSeason;
-        if (sa != sb) return sa.compareTo(sb);
-        final ea = a.indexNumber ?? 0;
-        final eb = b.indexNumber ?? 0;
-        if (ea != eb) return ea.compareTo(eb);
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
-
-    final Map<int, List<AggregatedItem>> seasonGroups = {};
-    for (final ep in sorted) {
-      final s = ep.parentIndexNumber ?? defaultSeason;
-      seasonGroups.putIfAbsent(s, () => []).add(ep);
-    }
-
-    final currentSeasonNumber = item.parentIndexNumber;
-    final sections = <SpotlightModalSection>[];
-    for (final entry in seasonGroups.entries) {
-      final seasonNum = entry.key;
-      final seasonEpisodes = entry.value;
-      final isCurrent = currentSeasonNumber != null
-          ? seasonNum == currentSeasonNumber
-          : seasonEpisodes.any(
-              (e) =>
-                  e.id == item.id ||
-                  (item.seasonId != null && e.seasonId == item.seasonId),
-            );
-      final seasonTitle = seasonNum == 0
-          ? l10n.specials
-          : l10n.seasonNumber(seasonNum);
-      sections.add(
-        SpotlightModalSection(
-          id: 'season_$seasonNum',
-          title: seasonTitle,
-          count: seasonEpisodes.length,
-          collapsible: true,
-          initiallyExpanded: isCurrent,
-          builder: (context, firstFocusNode) => SpotlightMediaGridSection(
-            items: seasonEpisodes,
-            imageApi: _imageApi,
-            prefs: prefs,
-            aspectRatio: 16 / 9,
-            landscapeCells: true,
-            firstFocusNode: firstFocusNode,
-            onItemTap: actions.openItem,
-            currentItemId: item.id,
-            onItemChanged: () => vm.refreshEpisodeLists(),
-          ),
-        ),
-      );
-    }
-
-    final subtitle = seasonGroups.length > 1
-        ? [
-            l10n.spotlightSeasonsCount(seasonGroups.length),
-            l10n.spotlightEpisodesCount(episodes.length),
-          ].join(' · ')
-        : l10n.spotlightEpisodesCount(episodes.length);
-
+    final seasons = spotlightSeasonsFromEpisodes(
+      item,
+      episodes,
+      vm.seasons,
+      seasonLabel: (number) =>
+          number == 0 ? l10n.specials : l10n.seasonNumber(number),
+    );
     return SpotlightCardSpec(
       id: 'episodes',
       title: l10n.spotlightMoreEpisodes,
-      modalTitle: l10n.spotlightMoreEpisodes,
-      subtitle: subtitle,
+      modalTitle: l10n.seasons,
+      subtitle:
+          '${l10n.spotlightSeasonsCount(seasons.length)} · ${l10n.spotlightEpisodesCount(episodes.length)}',
       imageUrl: _firstEpisodeThumb(episodes) ?? fallbackImageUrl,
       icon: Icons.video_collection_outlined,
-      sections: sections,
+      sections: [
+        _mediaSection(l10n.seasons, seasons, currentItemId: item.seasonId),
+      ],
     );
   }
 
@@ -1441,4 +1399,50 @@ class _SpotlightCardsBuilder {
 
     return fallbackImageUrl;
   }
+}
+
+/// A picker is returned even for one season. Synthetic IDs never go to Core.
+List<AggregatedItem> spotlightSeasonsFromEpisodes(
+  AggregatedItem current,
+  List<AggregatedItem> episodes,
+  List<AggregatedItem> known, {
+  required String Function(int) seasonLabel,
+}) {
+  final groups = <int, List<AggregatedItem>>{};
+  for (final episode in episodes) {
+    groups
+        .putIfAbsent(
+          episode.parentIndexNumber ?? current.parentIndexNumber ?? 1,
+          () => [],
+        )
+        .add(episode);
+  }
+  return [
+    for (final number in (groups.keys.toList()..sort()))
+      (() {
+        final entries = groups[number]!;
+        final seasonId = entries
+            .map((e) => e.seasonId)
+            .whereType<String>()
+            .firstOrNull;
+        final actual = known
+            .where((s) => s.id == seasonId || s.indexNumber == number)
+            .firstOrNull;
+        return actual ??
+            AggregatedItem(
+              id: seasonId ?? 'spesh-season:${current.seriesId}:$number',
+              serverId: current.serverId,
+              rawData: {
+                'Type': 'Season',
+                'Name': seasonLabel(number),
+                'IndexNumber': number,
+                'SeriesId': current.seriesId,
+                'SeriesPrimaryImageTag':
+                    current.rawData['SeriesPrimaryImageTag'] ??
+                    entries.first.rawData['SeriesPrimaryImageTag'],
+                '_speshSyntheticSeason': seasonId == null,
+              },
+            );
+      })(),
+  ];
 }

@@ -51,7 +51,7 @@ import 'spotlight_images.dart';
 import 'spotlight_landscape_layout.dart';
 import 'spotlight_portrait_layout.dart';
 import 'widgets/spotlight_section_modal.dart';
-import 'widgets/spotlight_modal_grids.dart';
+import 'widgets/spotlight_virtual_episode_grid.dart';
 import 'widgets/spotlight_summary_card.dart';
 
 /// "Spotlight" detail-screen style: a hero-first layout with Play plus at most
@@ -494,6 +494,7 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
       sections: [
         SpotlightModalSection(
           title: AppLocalizations.of(context).episodes,
+          fillsViewport: true,
           builder: (modalContext, firstFocusNode) => StatefulBuilder(
             builder: (modalContext, update) =>
                 FutureBuilder<List<AggregatedItem>>(
@@ -502,7 +503,7 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
                     if (snapshot.hasError) {
                       return TextButton.icon(
                         onPressed: () => update(() {
-                          episodes = _vm.browseSeasonEpisodes(season);
+                          episodes = _vm.refreshBrowsedSeason(season);
                         }),
                         icon: const Icon(Icons.refresh),
                         label: const Text('Could not load episodes. Retry'),
@@ -514,12 +515,11 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
                     if (snapshot.data!.isEmpty) {
                       return const Text('No episodes available.');
                     }
-                    return SpotlightMediaGridSection(
+                    return SpotlightVirtualEpisodeGrid(
+                      key: ValueKey(season.id),
                       items: snapshot.data!,
                       imageApi: _vm.imageApi,
                       prefs: widget.prefs,
-                      aspectRatio: 16 / 9,
-                      landscapeCells: true,
                       firstFocusNode: firstFocusNode,
                       currentItemId: _vm.item?.type == 'Episode'
                           ? _vm.item?.id
@@ -527,9 +527,8 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
                       onItemChanged: () {
                         if (!modalContext.mounted) return;
                         update(() {
-                          episodes = _vm.browseSeasonEpisodes(season);
+                          episodes = _vm.refreshBrowsedSeason(season);
                         });
-                        unawaited(_vm.refreshEpisodeLists());
                       },
                       onItemTap: (episode) {
                         Navigator.of(

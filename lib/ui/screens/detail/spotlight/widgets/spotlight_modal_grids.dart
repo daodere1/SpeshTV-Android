@@ -138,6 +138,7 @@ class SpotlightMediaGridSection extends StatefulWidget {
   final VoidCallback? onItemChanged;
   final Map<int, int>? seerrSeasonStatus;
   final String? currentItemId;
+  final bool anchorOnOpen;
 
   const SpotlightMediaGridSection({
     super.key,
@@ -151,6 +152,7 @@ class SpotlightMediaGridSection extends StatefulWidget {
     this.firstFocusNode,
     this.seerrSeasonStatus,
     this.currentItemId,
+    this.anchorOnOpen = true,
   });
 
   @override
@@ -179,7 +181,12 @@ class _SpotlightMediaGridSectionState extends State<SpotlightMediaGridSection> {
     // must not move the initial anchor to another episode while browsing.
     if (!_initialTargetChosen) {
       _initialTargetChosen = true;
-      final index = spotlightInitialEpisodeIndex(items, currentItemId);
+      final selectedSeason = items.indexWhere(
+        (entry) => entry.type == 'Season' && entry.id == currentItemId,
+      );
+      final index = items.every((entry) => entry.type == 'Season')
+          ? (selectedSeason >= 0 ? selectedSeason : 0)
+          : spotlightInitialEpisodeIndex(items, currentItemId);
       if (index != null) _initialTargetId = items[index].id;
     }
     final target = items.indexWhere((item) => item.id == _initialTargetId);
@@ -325,7 +332,7 @@ class _SpotlightMediaGridSectionState extends State<SpotlightMediaGridSection> {
                               onChanged: onItemChanged,
                             ),
                     );
-                    return i == initialEpisode
+                    return widget.anchorOnOpen && i == initialEpisode
                         ? _InitialEpisodeAnchor(
                             focusNode: firstFocusNode,
                             child: card,

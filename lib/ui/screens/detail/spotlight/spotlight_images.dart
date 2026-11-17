@@ -16,6 +16,16 @@ String? spotlightItemImageUrl(ImageApi imageApi, AggregatedItem item) {
   if (isLibraryItem && tag != null) {
     return imageApi.getPrimaryImageUrl(item.id, maxHeight: 360, tag: tag);
   }
+  if (isLibraryItem &&
+      item.type == 'Season' &&
+      item.seriesId != null &&
+      item.rawData['SeriesPrimaryImageTag'] is String) {
+    return imageApi.getPrimaryImageUrl(
+      item.seriesId!,
+      maxHeight: 360,
+      tag: item.rawData['SeriesPrimaryImageTag'] as String,
+    );
+  }
   final seerrArt =
       spotlightSeerrPosterUrl(item.rawData['PosterPath'] as String?) ??
       spotlightPersonImageUrl(
@@ -65,7 +75,11 @@ String? spotlightLandscapeImageUrl(
 }) {
   final thumbTag = item.thumbImageTag;
   if (thumbTag != null && !item.id.startsWith('tmdb:')) {
-    return imageApi.getThumbImageUrl(item.id, maxWidth: maxWidth, tag: thumbTag);
+    return imageApi.getThumbImageUrl(
+      item.id,
+      maxWidth: maxWidth,
+      tag: thumbTag,
+    );
   }
   if (item.backdropImageTags.isNotEmpty && !item.id.startsWith('tmdb:')) {
     return imageApi.getBackdropImageUrl(
@@ -84,8 +98,9 @@ String? spotlightLandscapeImageUrl(
       tag: item.parentBackdropImageTags.first,
     );
   }
-  final seerrBackdrop =
-      spotlightSeerrBackdropUrl(item.rawData['BackdropPath'] as String?);
+  final seerrBackdrop = spotlightSeerrBackdropUrl(
+    item.rawData['BackdropPath'] as String?,
+  );
   if (seerrBackdrop != null) return seerrBackdrop;
 
   return fallbackUrl;
@@ -168,11 +183,7 @@ List<PersonBackdropCandidate> collectPersonSeerrBackdrops(
         final url = spotlightSeerrBackdropUrl(path);
         if (url != null) {
           results.add(
-            PersonBackdropCandidate(
-              key: key,
-              fullUrl: url,
-              cardUrl: url,
-            ),
+            PersonBackdropCandidate(key: key, fullUrl: url, cardUrl: url),
           );
         }
       }

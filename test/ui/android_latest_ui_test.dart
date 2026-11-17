@@ -68,7 +68,7 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
-  for (final build in ['30000206', '2000073', 'unknown']) {
+  for (final build in ['30000207', '2000074', 'unknown']) {
     testWidgets('bundled What’s New is readable for $build', (tester) async {
       await tester.pumpWidget(
         MaterialApp(home: SpeshWhatsNewScreen(buildNumber: build)),

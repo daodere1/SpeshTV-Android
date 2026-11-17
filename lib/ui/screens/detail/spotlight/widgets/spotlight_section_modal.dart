@@ -1,3 +1,5 @@
+import '../../../../navigation/route_lifecycle_observer.dart';
+
 import 'package:flutter/material.dart';
 
 import 'package:moonfin_design/moonfin_design.dart';
@@ -23,6 +25,7 @@ class SpotlightModalSection {
   /// False for content with nothing in it the remote can land on, like the
   /// Seerr stats. The opening focus skips it for the next section down.
   final bool focusable;
+  final bool fillsViewport;
   final Widget Function(BuildContext context)? headerActionBuilder;
   final Widget Function(BuildContext context, FocusNode? firstFocusNode)
   builder;
@@ -35,6 +38,7 @@ class SpotlightModalSection {
     this.collapsible = false,
     this.initiallyExpanded = true,
     this.focusable = true,
+    this.fillsViewport = false,
     this.headerActionBuilder,
   });
 }
@@ -81,9 +85,10 @@ abstract final class SpotlightSectionModal {
         showBack: showBack,
       ),
       transitionBuilder: (context, anim, secondAnim, child) {
-        final scale = Tween<double>(begin: 0.96, end: 1.0).animate(
-          CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
-        );
+        final scale = Tween<double>(
+          begin: 0.96,
+          end: 1.0,
+        ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
         return FadeTransition(
           opacity: anim,
           child: ScaleTransition(scale: scale, child: child),
@@ -91,7 +96,9 @@ abstract final class SpotlightSectionModal {
       },
     );
     return future.whenComplete(() {
-      returnFocus?.requestFocus();
+      if (returnFocus?.context != null && returnFocus!.canRequestFocus) {
+        returnFocus.requestFocus();
+      }
     });
   }
 }
@@ -123,13 +130,32 @@ class _SpotlightModalShell extends StatefulWidget {
   State<_SpotlightModalShell> createState() => _SpotlightModalShellState();
 }
 
-class _SpotlightModalShellState extends State<_SpotlightModalShell> {
+class _SpotlightModalShellState extends State<_SpotlightModalShell>
+    with RouteAware {
   final _trapScope = FocusScopeNode(
     debugLabel: 'SpotlightModalTrap',
     traversalEdgeBehavior: TraversalEdgeBehavior.stop,
   );
   final _firstCellFocusNode = FocusNode(debugLabel: 'SpotlightModalFirstCell');
   final _scrollController = ScrollController();
+  ModalRoute<dynamic>? _observedRoute;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null && route != _observedRoute) {
+      if (_observedRoute != null) routeLifecycleObserver.unsubscribe(this);
+      _observedRoute = route;
+      routeLifecycleObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    if (_scrollController.hasClients)
+      _scrollController.jumpTo(_scrollController.offset);
+  }
+
   bool _dismissed = false;
 
   late String _title = widget.title;
@@ -175,7 +201,8 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
     final onNearEnd = widget.onNearEnd;
     if (onNearEnd == null || !_scrollController.hasClients) return;
     final position = _scrollController.position;
-    if (position.pixels >= position.maxScrollExtent - position.viewportDimension) {
+    if (position.pixels >=
+        position.maxScrollExtent - position.viewportDimension) {
       onNearEnd();
     }
   }
@@ -202,6 +229,7 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
 
   @override
   void dispose() {
+    routeLifecycleObserver.unsubscribe(this);
     widget.refreshOn?.removeListener(_onRefresh);
     _scrollController.removeListener(_onScroll);
     _trapScope.dispose();
@@ -308,6 +336,8 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
       }
     }
 
+    final ownsViewport =
+        _sections.length == 1 && _sections.single.fillsViewport;
     final scrollView = SingleChildScrollView(
       controller: _scrollController,
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
@@ -317,7 +347,8 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
           for (var i = 0; i < _sections.length; i++) ...[
             if (i > 0)
               SizedBox(
-                height: _sections[i - 1].collapsible &&
+                height:
+                    _sections[i - 1].collapsible &&
                         !_isSectionExpanded(_sections[i - 1], i - 1)
                     ? 8
                     : 24,
@@ -379,9 +410,7 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
               ),
               if (!PlatformDetection.isTV)
                 IconButton(
-                  tooltip: MaterialLocalizations.of(
-                    context,
-                  ).closeButtonTooltip,
+                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
                   icon: const AdaptiveIcon(Icons.close),
                   onPressed: () => _dismiss(fromKeyEvent: false),
                 ),
@@ -390,7 +419,12 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
         ),
         Container(height: 1, color: Colors.white.withValues(alpha: 0.08)),
         Expanded(
-          child: showScrollbar
+          child: ownsViewport
+              ? Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+                  child: _sections.single.builder(context, _firstCellFocusNode),
+                )
+              : showScrollbar
               ? Scrollbar(controller: _scrollController, child: scrollView)
               : scrollView,
         ),
@@ -398,10 +432,7 @@ class _SpotlightModalShellState extends State<_SpotlightModalShell> {
     );
 
     final radius = AppRadius.circular(compact ? 0 : 20);
-    final clippedBody = ClipRRect(
-      borderRadius: radius,
-      child: body,
-    );
+    final clippedBody = ClipRRect(borderRadius: radius, child: body);
 
     final borderDecoration = compact
         ? null
