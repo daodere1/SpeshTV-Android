@@ -60,7 +60,7 @@ String bottomNavbarStyleHint(AppLocalizations l10n, BottomNavbarStyle style) =>
     };
 
 IconData bottomNavHubActionIcon(BottomNavHubAction action) => switch (action) {
-  BottomNavHubAction.studios => Icons.business_outlined,
+  BottomNavHubAction.studios => Icons.movie_creation_outlined,
   BottomNavHubAction.calendar => Icons.calendar_month_outlined,
   BottomNavHubAction.saved => Icons.download_for_offline,
   BottomNavHubAction.shuffle => Icons.shuffle_rounded,
@@ -120,7 +120,7 @@ BottomNavItemView bottomNavItemView(
       label: 'Studios',
       slot: item.slot,
       icon: (active, size, color) => AdaptiveIcon(
-        active ? Icons.business : Icons.business_outlined,
+        active ? Icons.movie_creation : Icons.movie_creation_outlined,
         size: size,
         color: color,
       ),

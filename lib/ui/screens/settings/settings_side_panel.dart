@@ -1,4 +1,6 @@
+import 'spesh_whats_new_screen.dart';
 import '../../widgets/spesh_brand.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -183,9 +185,9 @@ Future<void> _openThemeEditor(BuildContext context) async {
 
   if (!ok && context.mounted) {
     final l10n = AppLocalizations.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(l10n.adminCouldNotOpenUrl('$uri'))),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(l10n.adminCouldNotOpenUrl('$uri'))));
   }
 }
 
@@ -355,10 +357,18 @@ class _SettingsSidePanelState extends ConsumerState<SettingsSidePanel> {
               onTap: () => context.pushSettingsScreen(const _GeneralScreen()),
             ),
             _PanelEntry(
+              icon: Icons.new_releases_outlined,
+              title: 'What’s New',
+              subtitle: 'SpeshTV release notes',
+              onTap: () =>
+                  context.pushSettingsScreen(const SpeshWhatsNewScreen()),
+            ),
+            _PanelEntry(
               icon: Icons.palette,
               title: l10n.appearance,
               subtitle: l10n.settingsAppearanceSubtitle,
-              onTap: () => context.pushSettingsScreen(const _AppearanceScreen()),
+              onTap: () =>
+                  context.pushSettingsScreen(const _AppearanceScreen()),
             ),
             _PanelEntry(
               icon: Icons.play_circle,
@@ -387,7 +397,8 @@ class _SettingsSidePanelState extends ConsumerState<SettingsSidePanel> {
               icon: Icons.info_outline,
               title: l10n.aboutTitle,
               subtitle: l10n.settingsAboutSubtitle,
-              onTap: () => context.pushSettingsScreen(const _AboutCategoryScreen()),
+              onTap: () =>
+                  context.pushSettingsScreen(const _AboutCategoryScreen()),
             ),
           ];
 

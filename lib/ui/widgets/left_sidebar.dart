@@ -1293,7 +1293,7 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
                 if (speshWeb && !kidsMode) ...[
                   _SidebarItem(
                     key: const ValueKey('sidebar-studios'),
-                    icon: Icons.business_outlined,
+                    icon: Icons.movie_creation_outlined,
                     label: 'Streaming services',
                     showLabel: _showLabels,
                     trailing: _showLabels

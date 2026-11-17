@@ -11,6 +11,8 @@ import 'package:server_core/server_core.dart';
 import '../../../data/repositories/seerr_repository.dart';
 import '../../../data/utils/blocked_ratings.dart';
 import '../../../data/services/calendar_source_loader.dart';
+import '../../../data/services/calendar_refresh_loop.dart';
+import '../../navigation/route_lifecycle_observer.dart';
 import '../../../util/calendar_eastern_time.dart';
 import '../../../data/services/plugin_sync_service.dart';
 import '../../../l10n/app_localizations.dart';
@@ -59,7 +61,8 @@ class CinematicCalendarEntry {
 }
 
 String calendarEntryIdentity(CinematicCalendarEntry entry) =>
-    '${entry.route}|${entry.episodeKey}|${entry.date.toIso8601String()}|${entry.subtitle}';
+    entry.episodeKey ??
+    '${entry.isTv}|${entry.title}|${entry.date.toIso8601String()}|${entry.subtitle}';
 
 String? calendarEpisodeKey(String? series, Object? season, Object? episode) {
   final name = series?.toLowerCase().replaceAll(
@@ -226,14 +229,41 @@ class CinematicCalendarScreen extends StatefulWidget {
 }
 
 class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
-    with WidgetsBindingObserver {
-  Timer? _midnightRefresh;
+    with WidgetsBindingObserver, RouteAware {
+  late final CalendarRefreshLoop _refreshLoop;
+  bool _foreground = true, _routeVisible = true;
+  ModalRoute<dynamic>? _observedRoute;
+  final _sourceRows = <String, List<CinematicCalendarEntry>>{};
+  void _updateActivity({bool refresh = false}) =>
+      _refreshLoop.setActive(_foreground && _routeVisible, refresh: refresh);
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null && route != _observedRoute) {
+      if (_observedRoute != null) routeLifecycleObserver.unsubscribe(this);
+      _observedRoute = route;
+      routeLifecycleObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPushNext() {
+    _routeVisible = false;
+    _updateActivity();
+  }
+
+  @override
+  void didPopNext() {
+    _routeVisible = true;
+    _updateActivity(refresh: true);
+  }
+
   final _entryFocus = <String, FocusNode>{};
   Future<void> _openEntry(CinematicCalendarEntry entry, FocusNode node) async {
     await context.push(entry.route);
     if (!mounted) return;
     if (node.context != null) node.requestFocus();
-    unawaited(_load(force: true));
   }
 
   DateTime _month = DateTime(
@@ -255,31 +285,23 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _scheduleMidnightRefresh();
+    _refreshLoop = CalendarRefreshLoop(
+      read: () => unawaited(_load()),
+      busy: () => _refreshing,
+    );
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _updateActivity();
     _watchedPrefs.addListener(_onConfigurationChanged);
     _watchedSync?.addListener(_onConfigurationChanged);
-    _load();
-  }
-
-  void _scheduleMidnightRefresh() {
-    _midnightRefresh?.cancel();
-    final now = DateTime.now();
-    _midnightRefresh = Timer(
-      calendarNextEasternMidnight(now).difference(now) +
-          const Duration(seconds: 15),
-      () {
-        if (!mounted) return;
-        _load(); // Read the server snapshot; this does not create a client cache.
-        _scheduleMidnightRefresh();
-      },
-    );
+    if (_foreground) unawaited(_load());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
-    unawaited(_load(force: true));
-    _scheduleMidnightRefresh();
+    _foreground = state == AppLifecycleState.resumed;
+    _updateActivity(refresh: _foreground);
   }
 
   late final _watchedPrefs = GetIt.instance<UserPreferences>();
@@ -304,12 +326,19 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
   void _onConfigurationChanged() {
     if (!mounted || _configurationScope == _configurationKey()) return;
     // Do not keep rows from a previous member/policy while the new scope loads.
-    setState(() => _entries = []);
-    unawaited(_load(force: true));
+    setState(() {
+      _entries = [];
+      _sourceRows.clear();
+    });
+    _generation++;
+    unawaited(_calendarSubscription?.cancel());
+    _refreshing = false;
+    _refreshLoop.request();
   }
 
   Future<void> _load({bool force = false}) async {
     final generation = ++_generation;
+    _refreshing = true;
     await _calendarSubscription?.cancel();
     if (!mounted || generation != _generation) return;
     final now = calendarEasternNow();
@@ -335,7 +364,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
     final seerrEnabled = allowed && (sync?.seerrAvailable ?? false);
     final sonarrEnabled = allowed && (sync?.sonarrCalendarAvailable ?? false);
     final sources = <String, Future<List<CinematicCalendarEntry>> Function()>{};
-    sources['Jellyfin'] = () async {
+    sources['Library'] = () async {
       final entries = <CinematicCalendarEntry>[];
       final result = await client.itemsApi
           .getItems(
@@ -391,7 +420,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
             isTv: item['Type'] == 'Episode' || series != null,
             availabilityLabel: 'Available',
             title: series ?? title,
-            subtitle: series == null ? 'Jellyfin' : '$title · Jellyfin',
+            subtitle: series == null ? 'Library' : '$title · Library',
             imageUrl: artwork,
             route: Destinations.item(id),
             episodeKey: calendarEpisodeKey(
@@ -411,7 +440,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
           .timeout(const Duration(seconds: 15));
       String day(DateTime value) => DateFormat('yyyy-MM-dd').format(value);
       if (sonarrEnabled)
-        sources['Sonarr'] = () async {
+        sources['TV'] = () async {
           final entries = <CinematicCalendarEntry>[];
           final values = await (await repository())
               .getSonarrCalendar(
@@ -438,7 +467,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
                 ),
                 title: '${series['title'] ?? ''}',
                 subtitle:
-                    'S${item['seasonNumber'] ?? 1} · E${item['episodeNumber'] ?? 1} · ${item['title'] ?? ''} · Sonarr',
+                    'S${item['seasonNumber'] ?? 1} · E${item['episodeNumber'] ?? 1} · ${item['title'] ?? ''} · TV',
                 imageUrl: _remoteArtwork(series),
                 route: sonarrCalendarRoute(item),
               ),
@@ -448,7 +477,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
           return entries;
         };
       if (seerrEnabled)
-        sources['Radarr'] = () async {
+        sources['Movies'] = () async {
           final entries = <CinematicCalendarEntry>[];
           final values = await (await repository())
               .getRadarrCalendar(start: day(start), end: day(end))
@@ -469,12 +498,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
                 CinematicCalendarEntry(
                   date: DateTime(date.year, date.month, date.day),
                   title: '${item['title'] ?? ''}',
-                  subtitle:
-                      '${release == 'inCinemas'
-                          ? 'Cinema'
-                          : release == 'digitalRelease'
-                          ? 'Digital'
-                          : 'Physical'} · Radarr',
+                  subtitle: calendarReleaseLabel(release),
                   imageUrl: _remoteArtwork(item),
                   route: localId == null
                       ? Destinations.seerrMedia(id!, mediaType: 'movie')
@@ -488,6 +512,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
           return entries;
         };
     }
+    _sourceRows.removeWhere((source, _) => !sources.containsKey(source));
     final loader = CalendarSourceLoader<CinematicCalendarEntry>();
     final scope =
         '$_configurationScope|${start.year}-${start.month}-${start.day}|$seerrEnabled|$sonarrEnabled|agenda-v1';
@@ -503,14 +528,21 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
         )
         .listen((snapshot) {
           if (!mounted || generation != _generation) return;
+          for (final entry in snapshot.sources.entries) {
+            _sourceRows[entry.key] = entry.value;
+          }
+          for (final failure in snapshot.failures.entries) {
+            final error = failure.value;
+            if (error is DioException &&
+                [401, 403].contains(error.response?.statusCode)) {
+              _sourceRows.remove(failure.key);
+            }
+          }
           final rows = calendarEntriesForRange(
-            snapshot.sources.values.expand((rows) => rows),
+            _sourceRows.values.expand((rows) => rows),
             start,
             end,
           );
-          // Keep the current visible rows during an empty initial refresh,
-          // without retaining schedules beyond this mounted page.
-          if (rows.isEmpty && snapshot.refreshing) return;
           setState(() {
             _entries = rows;
             _refreshing = snapshot.refreshing;
@@ -524,12 +556,14 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
                 ),
               );
           });
+          if (!snapshot.refreshing) scheduleMicrotask(_refreshLoop.settled);
         });
   }
 
   @override
   void dispose() {
-    _midnightRefresh?.cancel();
+    _refreshLoop.dispose();
+    routeLifecycleObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _watchedPrefs.removeListener(_onConfigurationChanged);
     _watchedSync?.removeListener(_onConfigurationChanged);
@@ -575,22 +609,22 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
       final detail = data is Map ? data['error']?.toString() : null;
       const knownReasons = {
         'No admin Seerr session is available to read the arr settings':
-            'Sign in to Requests as a Seerr administrator',
+            'Ask your administrator to check calendar access',
         'No sonarr server is configured in Seerr':
-            'Add a Sonarr connection in Seerr or Spesh Base',
+            'Ask your administrator to configure the TV calendar',
         'No radarr server is configured in Seerr':
-            'Add a Radarr connection in Seerr',
+            'Ask your administrator to configure the movie calendar',
         'No calendar connection is configured':
             'Configure the calendar connection in Spesh Base',
         'Could not reach the configured Sonarr calendar server':
-            'Sonarr is unreachable; check its connection in Spesh Base',
+            'TV calendar is unreachable; please retry',
       };
       if (knownReasons.containsKey(detail)) return knownReasons[detail]!;
       final code = error.response?.statusCode;
       if (code == 401 || code == 403)
         return 'Connection needs administrator attention';
-      if (code == 404) return 'Server is not configured in Seerr';
-      if (code == 503) return 'Seerr calendar connection is unavailable';
+      if (code == 404) return 'Calendar is not configured';
+      if (code == 503) return 'Calendar connection is unavailable';
       if (code == 502) return 'Calendar server could not be reached';
       if (code != null) return 'Connection failed (HTTP $code)';
     }
@@ -628,7 +662,8 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
                     ),
                     IconButton(
                       tooltip: l10n.refresh,
-                      onPressed: () => _load(force: true),
+                      onPressed: _refreshLoop.request,
+                      style: calendarRefreshButtonStyle,
                       icon: const Icon(Icons.refresh),
                     ),
                   ],
@@ -645,7 +680,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
                         ),
                       ),
                       TextButton(
-                        onPressed: () => _load(force: true),
+                        onPressed: _refreshLoop.request,
                         child: Text(l10n.retry),
                       ),
                     ],
@@ -674,6 +709,8 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
                           child: Text(
                             _partialFailure
                                 ? 'Could not load upcoming releases. Use Retry.'
+                                : _refreshing
+                                ? 'Loading upcoming releases…'
                                 : 'No upcoming releases for this filter.',
                           ),
                         )
@@ -906,6 +943,19 @@ class CalendarMediaFilters extends StatelessWidget {
         ChoiceChip(
           key: ValueKey(filter),
           selected: selected == filter,
+          color: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.focused)
+                ? const Color(0xFF2869AC)
+                : states.contains(WidgetState.selected)
+                ? const Color(0xFF28415D)
+                : const Color(0xFF1B2330),
+          ),
+          labelStyle: const TextStyle(color: Colors.white),
+          side: BorderSide(
+            color: selected == filter
+                ? const Color(0xFF8ABCF4)
+                : const Color(0xFF64748B),
+          ),
           avatar: filter == CalendarMediaFilter.all
               ? null
               : Icon(
@@ -927,3 +977,19 @@ class CalendarMediaFilters extends StatelessWidget {
     ],
   );
 }
+
+String calendarReleaseLabel(String release) => switch (release) {
+  'digitalRelease' => 'Digital release',
+  'physicalRelease' => 'Physical release',
+  'inCinemas' => 'In cinemas',
+  _ => 'Release',
+};
+final calendarRefreshButtonStyle = ButtonStyle(
+  foregroundColor: const WidgetStatePropertyAll(Colors.white),
+  backgroundColor: WidgetStateProperty.resolveWith(
+    (states) => states.contains(WidgetState.focused)
+        ? const Color(0xFF2869AC)
+        : const Color(0xFF1B2330),
+  ),
+  side: const WidgetStatePropertyAll(BorderSide(color: Color(0xFF64748B))),
+);
