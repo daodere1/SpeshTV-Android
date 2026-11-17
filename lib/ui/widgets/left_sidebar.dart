@@ -1306,11 +1306,14 @@ class _LeftSidebarState extends State<LeftSidebar> with RouteAware {
                         : null,
                     onPressed: () async {
                       if (PlatformDetection.isTV) {
-                        final name = await pickSpeshStudio(context);
-                        if (!context.mounted || name == null) return;
-                        _onNavigate();
-                        _markNavigationAwayFromSidebar();
-                        context.navigateTopLevel(streamingServiceRoute(name));
+                        await openSpeshStudio(
+                          context,
+                          beforeNavigate: () {
+                            if (!mounted) return;
+                            _onNavigate();
+                            _markNavigationAwayFromSidebar();
+                          },
+                        );
                         return;
                       }
                       _expand();

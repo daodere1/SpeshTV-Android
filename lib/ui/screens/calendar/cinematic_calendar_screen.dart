@@ -18,6 +18,20 @@ import '../../../preference/user_preferences.dart';
 import '../../navigation/destinations.dart';
 import '../../widgets/bounded_network_image.dart';
 import '../../widgets/navigation_layout.dart';
+import '../../widgets/focus/focusable_wrapper.dart';
+
+enum CalendarMediaFilter { all, tv, movies }
+
+List<CinematicCalendarEntry> filterCalendarEntries(
+  List<CinematicCalendarEntry> entries,
+  CalendarMediaFilter filter,
+) => entries
+    .where(
+      (entry) =>
+          filter == CalendarMediaFilter.all ||
+          (filter == CalendarMediaFilter.tv ? entry.isTv : !entry.isTv),
+    )
+    .toList();
 
 class CinematicCalendarEntry {
   const CinematicCalendarEntry({
@@ -30,6 +44,7 @@ class CinematicCalendarEntry {
     this.episodeKey,
     this.timingPriority = 0,
     this.isTv = false,
+    this.availabilityLabel,
   });
   final DateTime date;
   final String title;
@@ -40,7 +55,11 @@ class CinematicCalendarEntry {
   final String? episodeKey;
   final int timingPriority;
   final bool isTv;
+  final String? availabilityLabel;
 }
+
+String calendarEntryIdentity(CinematicCalendarEntry entry) =>
+    '${entry.route}|${entry.episodeKey}|${entry.date.toIso8601String()}|${entry.subtitle}';
 
 String? calendarEpisodeKey(String? series, Object? season, Object? episode) {
   final name = series?.toLowerCase().replaceAll(
@@ -52,9 +71,23 @@ String? calendarEpisodeKey(String? series, Object? season, Object? episode) {
   return '$name|$season|$episode';
 }
 
+String? calendarLocalItemId(Map item) {
+  final id = item['moonfinItemId']?.toString().trim();
+  return id == null || id.isEmpty ? null : id;
+}
+
+String? calendarAvailabilityLabel(Map item, {required bool tv}) {
+  if (tv) {
+    final episode = item['moonfinEpisodeId']?.toString().trim();
+    if (episode != null && episode.isNotEmpty) return 'Available';
+    return calendarLocalItemId(item) == null ? null : 'Series available';
+  }
+  return calendarLocalItemId(item) == null ? null : 'Available';
+}
+
 String sonarrCalendarRoute(Map item) {
   for (final key in ['moonfinEpisodeId', 'moonfinItemId']) {
-    final localId = item[key]?.toString();
+    final localId = item[key]?.toString().trim();
     if (localId != null && localId.isNotEmpty)
       return Destinations.item(localId);
   }
@@ -119,17 +152,15 @@ List<CinematicCalendarEntry> calendarEntriesForRange(
               date: entry.date,
               title: entry.title,
               subtitle: entry.subtitle,
-              route: prior.route.startsWith('/item/')
-                  ? prior.route
-                  : entry.route,
+              route: calendarPreferredRoute(prior, entry),
               imageUrl: entry.imageUrl ?? prior.imageUrl,
               hasAirTime: entry.hasAirTime,
               episodeKey: key,
               timingPriority: entry.timingPriority,
               isTv: entry.isTv,
+              availabilityLabel: calendarPreferredAvailability(prior, entry),
             );
-    } else if (entry.route.startsWith('/item/') &&
-        !prior.route.startsWith('/item/')) {
+    } else if (calendarPreferredRoute(prior, entry) != prior.route) {
       selected[key] = CinematicCalendarEntry(
         date: prior.date,
         title: prior.title,
@@ -140,6 +171,7 @@ List<CinematicCalendarEntry> calendarEntriesForRange(
         episodeKey: key,
         timingPriority: prior.timingPriority,
         isTv: prior.isTv,
+        availabilityLabel: calendarPreferredAvailability(prior, entry),
       );
     }
   }
@@ -170,9 +202,21 @@ List<CinematicCalendarEntry> calendarEntriesForRange(
   });
 }
 
-final _calendarLoaders = Expando<CalendarSourceLoader<CinematicCalendarEntry>>(
-  'member-calendar',
-);
+String? calendarPreferredAvailability(
+  CinematicCalendarEntry a,
+  CinematicCalendarEntry b,
+) => a.availabilityLabel == 'Available' || b.availabilityLabel == 'Available'
+    ? 'Available'
+    : b.availabilityLabel ?? a.availabilityLabel;
+String calendarPreferredRoute(
+  CinematicCalendarEntry a,
+  CinematicCalendarEntry b,
+) {
+  if (b.route.startsWith('/item/') &&
+      (!a.route.startsWith('/item/') || b.availabilityLabel == 'Available'))
+    return b.route;
+  return a.route.startsWith('/item/') ? a.route : b.route;
+}
 
 class CinematicCalendarScreen extends StatefulWidget {
   const CinematicCalendarScreen({super.key});
@@ -181,13 +225,24 @@ class CinematicCalendarScreen extends StatefulWidget {
       _CinematicCalendarScreenState();
 }
 
-class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
+class _CinematicCalendarScreenState extends State<CinematicCalendarScreen>
+    with WidgetsBindingObserver {
+  Timer? _midnightRefresh;
+  final _entryFocus = <String, FocusNode>{};
+  Future<void> _openEntry(CinematicCalendarEntry entry, FocusNode node) async {
+    await context.push(entry.route);
+    if (!mounted) return;
+    if (node.context != null) node.requestFocus();
+    unawaited(_load(force: true));
+  }
+
   DateTime _month = DateTime(
     calendarEasternNow().year,
     calendarEasternNow().month,
     calendarEasternNow().day,
   );
   List<CinematicCalendarEntry> _entries = [];
+  CalendarMediaFilter _mediaFilter = CalendarMediaFilter.all;
   bool _loading = true;
   bool _refreshing = false;
   StreamSubscription<CalendarSourceSnapshot<CinematicCalendarEntry>>?
@@ -199,21 +254,46 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scheduleMidnightRefresh();
     _watchedPrefs.addListener(_onConfigurationChanged);
     _watchedSync?.addListener(_onConfigurationChanged);
     _load();
   }
 
+  void _scheduleMidnightRefresh() {
+    _midnightRefresh?.cancel();
+    final now = DateTime.now();
+    _midnightRefresh = Timer(
+      calendarNextEasternMidnight(now).difference(now) +
+          const Duration(seconds: 15),
+      () {
+        if (!mounted) return;
+        _load(); // Read the server snapshot; this does not create a client cache.
+        _scheduleMidnightRefresh();
+      },
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_load(force: true));
+    _scheduleMidnightRefresh();
+  }
+
   late final _watchedPrefs = GetIt.instance<UserPreferences>();
   late final PluginSyncService? _watchedSync =
       GetIt.instance.isRegistered<PluginSyncService>()
-          ? GetIt.instance<PluginSyncService>() : null;
+      ? GetIt.instance<PluginSyncService>()
+      : null;
   String _configurationScope = '';
 
   String _configurationKey() {
     final prefs = GetIt.instance<UserPreferences>();
     final sync = GetIt.instance.isRegistered<PluginSyncService>()
-        ? GetIt.instance<PluginSyncService>() : null;
+        ? GetIt.instance<PluginSyncService>()
+        : null;
     return '${GetIt.instance<MediaServerClient>().userId}|'
         '${prefs.get(UserPreferences.kidsModeEnabled)}|'
         '${prefs.get(UserPreferences.blockedParentalRatings)}|'
@@ -309,6 +389,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
           CinematicCalendarEntry(
             date: DateTime(date.year, date.month, date.day),
             isTv: item['Type'] == 'Episode' || series != null,
+            availabilityLabel: 'Available',
             title: series ?? title,
             subtitle: series == null ? 'Jellyfin' : '$title · Jellyfin',
             imageUrl: artwork,
@@ -325,12 +406,14 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
       return entries;
     };
     if (seerrEnabled || sonarrEnabled) {
-      final repo = GetIt.instance<SeerrRepository>();
+      Future<SeerrRepository> repository() => GetIt.instance
+          .getAsync<SeerrRepository>()
+          .timeout(const Duration(seconds: 15));
       String day(DateTime value) => DateFormat('yyyy-MM-dd').format(value);
       if (sonarrEnabled)
         sources['Sonarr'] = () async {
           final entries = <CinematicCalendarEntry>[];
-          final values = await repo
+          final values = await (await repository())
               .getSonarrCalendar(
                 start: day(start.subtract(const Duration(days: 1))),
                 end: day(end.add(const Duration(days: 1))),
@@ -345,6 +428,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
               CinematicCalendarEntry(
                 date: airing.date,
                 isTv: true,
+                availabilityLabel: calendarAvailabilityLabel(item, tv: true),
                 hasAirTime: airing.hasTime,
                 timingPriority: 2,
                 episodeKey: calendarEpisodeKey(
@@ -366,12 +450,13 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
       if (seerrEnabled)
         sources['Radarr'] = () async {
           final entries = <CinematicCalendarEntry>[];
-          final values = await repo
+          final values = await (await repository())
               .getRadarrCalendar(start: day(start), end: day(end))
               .timeout(const Duration(seconds: 65));
           for (final item in values.whereType<Map>()) {
             final id = item['tmdbId']?.toString();
-            if (id == null || id == '0') continue;
+            final localId = calendarLocalItemId(item);
+            if (localId == null && (id == null || id == '0')) continue;
             // Calendar APIs can return a film for any release in the interval.
             for (final release in [
               'digitalRelease',
@@ -391,7 +476,10 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
                           ? 'Digital'
                           : 'Physical'} · Radarr',
                   imageUrl: _remoteArtwork(item),
-                  route: Destinations.seerrMedia(id, mediaType: 'movie'),
+                  route: localId == null
+                      ? Destinations.seerrMedia(id!, mediaType: 'movie')
+                      : Destinations.item(localId),
+                  availabilityLabel: calendarAvailabilityLabel(item, tv: false),
                 ),
               );
             }
@@ -400,10 +488,9 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
           return entries;
         };
     }
-    final loader = _calendarLoaders[client] ??=
-        CalendarSourceLoader<CinematicCalendarEntry>();
+    final loader = CalendarSourceLoader<CinematicCalendarEntry>();
     final scope =
-        '$_configurationScope|${start.year}-${start.month}-${start.day}|$seerrEnabled|$sonarrEnabled|90|agenda-v3';
+        '$_configurationScope|${start.year}-${start.month}-${start.day}|$seerrEnabled|$sonarrEnabled|agenda-v1';
     _calendarSubscription = loader
         .load(
           scope: scope,
@@ -421,6 +508,9 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
             start,
             end,
           );
+          // Keep the current visible rows during an empty initial refresh,
+          // without retaining schedules beyond this mounted page.
+          if (rows.isEmpty && snapshot.refreshing) return;
           setState(() {
             _entries = rows;
             _refreshing = snapshot.refreshing;
@@ -439,9 +529,14 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
 
   @override
   void dispose() {
-    _generation++;
+    _midnightRefresh?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _watchedPrefs.removeListener(_onConfigurationChanged);
     _watchedSync?.removeListener(_onConfigurationChanged);
+    for (final node in _entryFocus.values) {
+      node.dispose();
+    }
+    _generation++;
     unawaited(_calendarSubscription?.cancel());
     super.dispose();
   }
@@ -504,6 +599,7 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final visibleEntries = filterCalendarEntries(_entries, _mediaFilter);
     final compact = MediaQuery.sizeOf(context).width < 760;
     final l10n = AppLocalizations.of(context);
     return Scaffold(
@@ -560,40 +656,44 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
                 ),
                 const SizedBox(height: 17),
                 Text(
-                  'Air times use Eastern Time (EST/EDT). Release dates without a supplied time are marked “Time unavailable”.',
+                  'Schedules are cached on the server and refreshed at midnight Eastern (EST/EDT). Times without a supplied air time are marked “Time unavailable”.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 10),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.tv, color: Color(0xFF8ABCF4), size: 16),
-                      SizedBox(width: 6),
-                      Text('TV', style: TextStyle(color: Color(0xFF8ABCF4))),
-                      SizedBox(width: 24),
-                      Icon(
-                        Icons.movie_outlined,
-                        color: Color(0xFFF3C564),
-                        size: 16,
-                      ),
-                      SizedBox(width: 6),
-                      Text(
-                        'Movies',
-                        style: TextStyle(color: Color(0xFFF3C564)),
-                      ),
-                    ],
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: CalendarMediaFilters(
+                    selected: _mediaFilter,
+                    onChanged: (value) => setState(() => _mediaFilter = value),
                   ),
                 ),
                 Expanded(
                   child: _loading
                       ? const Center(child: CircularProgressIndicator())
-                      : _entries.isEmpty
-                      ? const Center(child: Text('No upcoming releases.'))
+                      : visibleEntries.isEmpty
+                      ? Center(
+                          child: Text(
+                            _partialFailure
+                                ? 'Could not load upcoming releases. Use Retry.'
+                                : 'No upcoming releases for this filter.',
+                          ),
+                        )
                       : ListView.builder(
-                          itemCount: _entries.length,
+                          key: ValueKey(_mediaFilter),
+                          itemCount: visibleEntries.length,
+                          findChildIndexCallback: (key) {
+                            final index = visibleEntries.indexWhere(
+                              (entry) =>
+                                  ValueKey(calendarEntryIdentity(entry)) == key,
+                            );
+                            return index < 0 ? null : index;
+                          },
                           itemBuilder: (context, index) {
-                            final entry = _entries[index];
+                            final entry = visibleEntries[index];
+                            final entryKey = calendarEntryIdentity(entry);
+                            final focus = _entryFocus.putIfAbsent(
+                              entryKey,
+                              () => FocusNode(debugLabel: entry.title),
+                            );
                             final accent = entry.isTv
                                 ? const Color(0xFF8ABCF4)
                                 : const Color(0xFFF3C564);
@@ -604,11 +704,16 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
                             final previous = index == 0
                                 ? null
                                 : calendarEasternDate(
-                                    _entries[index - 1].date,
-                                    hasAirTime: _entries[index - 1].hasAirTime,
+                                    visibleEntries[index - 1].date,
+                                    hasAirTime:
+                                        visibleEntries[index - 1].hasAirTime,
                                   );
-                            final heading = !DateUtils.isSameDay(previous, date);
+                            final heading = !DateUtils.isSameDay(
+                              previous,
+                              date,
+                            );
                             return Column(
+                              key: ValueKey(entryKey),
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 if (heading)
@@ -628,93 +733,141 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
                                   ),
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 14),
-                                  child: Card(
-                                    color: const Color(0xFF151515),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(24),
-                                      side: BorderSide(
-                                        color: accent.withValues(alpha: 0.45),
+                                  child: FocusableWrapper(
+                                    key: ValueKey(entryKey),
+                                    focusNode: focus,
+                                    autoScroll: true,
+                                    disableScale: true,
+                                    onSelect: () => _openEntry(entry, focus),
+                                    child: Card(
+                                      color: const Color(0xFF151515),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(24),
+                                        side: BorderSide(
+                                          color: accent.withValues(alpha: 0.45),
+                                        ),
                                       ),
-                                    ),
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(24),
-                                      onTap: () => context.push(entry.route),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(16),
-                                        child: Row(
-                                          children: [
-                                            ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(16),
-                                              child: SizedBox(
-                                                width: compact ? 88 : 160,
-                                                height: compact ? 56 : 90,
-                                                child: entry.imageUrl == null
-                                                    ? const ColoredBox(
-                                                        color: Color(
-                                                          0xFF25272C,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(24),
+                                        canRequestFocus: false,
+                                        onTap: () => _openEntry(entry, focus),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(16),
+                                          child: Row(
+                                            children: [
+                                              ClipRRect(
+                                                borderRadius:
+                                                    BorderRadius.circular(16),
+                                                child: SizedBox(
+                                                  width: compact ? 88 : 160,
+                                                  height: compact ? 56 : 90,
+                                                  child: entry.imageUrl == null
+                                                      ? const ColoredBox(
+                                                          color: Color(
+                                                            0xFF25272C,
+                                                          ),
+                                                          child: Icon(
+                                                            Icons
+                                                                .movie_outlined,
+                                                          ),
+                                                        )
+                                                      : BoundedNetworkImage(
+                                                          imageUrl:
+                                                              entry.imageUrl!,
+                                                          maxWidth: 640,
+                                                          fit: BoxFit.contain,
                                                         ),
-                                                        child: Icon(
-                                                          Icons.movie_outlined,
-                                                        ),
-                                                      )
-                                                    : BoundedNetworkImage(
-                                                        imageUrl:
-                                                            entry.imageUrl!,
-                                                        maxWidth: 640,
-                                                        fit: BoxFit.contain,
-                                                      ),
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 18),
-                                            Expanded(
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    entry.title,
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .titleMedium,
-                                                    maxLines: 2,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                  const SizedBox(height: 6),
-                                                  Text(
-                                                    entry.subtitle,
-                                                    style: Theme.of(context)
-                                                        .textTheme
-                                                        .bodySmall,
-                                                  ),
-                                                  if (compact)
+                                              const SizedBox(width: 18),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
                                                     Text(
-                                                      entry.hasAirTime
-                                                          ? '${DateFormat.jm().format(date)} ${date.timeZoneName}'
-                                                          : 'Time unavailable',
+                                                      entry.title,
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .titleMedium,
+                                                      maxLines: 2,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                    if (entry
+                                                            .availabilityLabel !=
+                                                        null)
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets.only(
+                                                              top: 4,
+                                                            ),
+                                                        child: Row(
+                                                          mainAxisSize:
+                                                              MainAxisSize.min,
+                                                          children: [
+                                                            const Icon(
+                                                              Icons
+                                                                  .check_circle,
+                                                              size: 14,
+                                                              color: Color(
+                                                                0xFF8CDDAB,
+                                                              ),
+                                                            ),
+                                                            const SizedBox(
+                                                              width: 5,
+                                                            ),
+                                                            Flexible(
+                                                              child: Text(
+                                                                entry
+                                                                    .availabilityLabel!,
+                                                                style: const TextStyle(
+                                                                  color: Color(
+                                                                    0xFF8CDDAB,
+                                                                  ),
+                                                                  fontSize: 12,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    const SizedBox(height: 6),
+                                                    Text(
+                                                      entry.subtitle,
                                                       style: Theme.of(context)
                                                           .textTheme
                                                           .bodySmall,
                                                     ),
-                                                ],
-                                              ),
-                                            ),
-                                            if (!compact)
-                                              Padding(
-                                                padding: const EdgeInsets.only(
-                                                  left: 12,
-                                                ),
-                                                child: Text(
-                                                  entry.hasAirTime
-                                                      ? '${DateFormat.jm().format(date)} ${date.timeZoneName}'
-                                                      : 'Time unavailable',
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .headlineSmall,
+                                                    if (compact)
+                                                      Text(
+                                                        entry.hasAirTime
+                                                            ? '${DateFormat.jm().format(date)} ${date.timeZoneName}'
+                                                            : 'Time unavailable',
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall,
+                                                      ),
+                                                  ],
                                                 ),
                                               ),
-                                          ],
+                                              if (!compact)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        left: 12,
+                                                      ),
+                                                  child: Text(
+                                                    entry.hasAirTime
+                                                        ? '${DateFormat.jm().format(date)} ${date.timeZoneName}'
+                                                        : 'Time unavailable',
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .headlineSmall,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -732,4 +885,45 @@ class _CinematicCalendarScreenState extends State<CinematicCalendarScreen> {
       ),
     );
   }
+}
+
+/// Switching filters operates only on this page's loaded entries.
+class CalendarMediaFilters extends StatelessWidget {
+  const CalendarMediaFilters({
+    super.key,
+    required this.selected,
+    required this.onChanged,
+  });
+  final CalendarMediaFilter selected;
+  final ValueChanged<CalendarMediaFilter> onChanged;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 12,
+    runSpacing: 8,
+    alignment: WrapAlignment.center,
+    children: [
+      for (final filter in CalendarMediaFilter.values)
+        ChoiceChip(
+          key: ValueKey(filter),
+          selected: selected == filter,
+          avatar: filter == CalendarMediaFilter.all
+              ? null
+              : Icon(
+                  filter == CalendarMediaFilter.tv
+                      ? Icons.tv
+                      : Icons.movie_outlined,
+                  size: 18,
+                  color: filter == CalendarMediaFilter.tv
+                      ? const Color(0xFF8ABCF4)
+                      : const Color(0xFFF3C564),
+                ),
+          label: Text(switch (filter) {
+            CalendarMediaFilter.all => 'All',
+            CalendarMediaFilter.tv => 'TV',
+            CalendarMediaFilter.movies => 'Movies',
+          }),
+          onSelected: (_) => onChanged(filter),
+        ),
+    ],
+  );
 }

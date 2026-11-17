@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import '../navigation/destinations.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../util/platform_detection.dart';
 
@@ -57,6 +60,26 @@ String streamingServiceRoute(String name) {
     mediaType: 'tv',
     filterType: 'network',
   );
+}
+
+/// Retain the app router, not the disposable toolbar/sidebar builder context.
+/// A focus/chrome rebuild while the picker is open must not lose its selection.
+Future<void> openSpeshStudio(
+  BuildContext context, {
+  VoidCallback? beforeNavigate,
+}) async {
+  final router = GoRouter.of(context);
+  final origin = router.routeInformationProvider.value.uri;
+  final name = await pickSpeshStudio(context);
+  if (name == null || router.routeInformationProvider.value.uri != origin)
+    return;
+  beforeNavigate?.call();
+  final route = streamingServiceRoute(name);
+  if (PlatformDetection.isWeb) {
+    router.go(route);
+  } else {
+    unawaited(router.push<void>(route));
+  }
 }
 
 /// Shared chooser for the toolbar, sidebar and phone hub.

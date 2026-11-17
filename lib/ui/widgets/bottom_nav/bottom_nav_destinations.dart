@@ -26,29 +26,26 @@ String bottomNavTabLabel(AppLocalizations l10n, BottomNavTab tab) =>
       BottomNavTab.favorites => l10n.favorites,
       BottomNavTab.genres => l10n.genres,
       BottomNavTab.liveTv => l10n.liveTv,
-      BottomNavTab.discover => GetIt.instance.isRegistered<SeerrPreferences>()
-          ? GetIt.instance<SeerrPreferences>().labelOrDefault(l10n.seerr)
-          : l10n.seerr,
+      BottomNavTab.discover =>
+        GetIt.instance.isRegistered<SeerrPreferences>()
+            ? GetIt.instance<SeerrPreferences>().labelOrDefault(l10n.seerr)
+            : l10n.seerr,
     };
 
 String bottomNavHubActionLabel(
   AppLocalizations l10n,
   BottomNavHubAction action,
-) =>
-    switch (action) {
-      BottomNavHubAction.studios => 'Studios',
-      BottomNavHubAction.calendar => 'Today & upcoming',
-      BottomNavHubAction.saved => l10n.savedMedia,
-      BottomNavHubAction.shuffle => l10n.shuffle,
-      BottomNavHubAction.syncPlay => l10n.syncPlay,
-      BottomNavHubAction.quickConnect => l10n.quickConnect,
-      BottomNavHubAction.remoteControl => l10n.remoteControl,
-    };
+) => switch (action) {
+  BottomNavHubAction.studios => 'Studios',
+  BottomNavHubAction.calendar => 'Today & upcoming',
+  BottomNavHubAction.saved => l10n.savedMedia,
+  BottomNavHubAction.shuffle => l10n.shuffle,
+  BottomNavHubAction.syncPlay => l10n.syncPlay,
+  BottomNavHubAction.quickConnect => l10n.quickConnect,
+  BottomNavHubAction.remoteControl => l10n.remoteControl,
+};
 
-String bottomNavbarStyleLabel(
-  AppLocalizations l10n,
-  BottomNavbarStyle style,
-) =>
+String bottomNavbarStyleLabel(AppLocalizations l10n, BottomNavbarStyle style) =>
     switch (style) {
       BottomNavbarStyle.dock => l10n.bottomNavbarStyleDock,
       BottomNavbarStyle.split => l10n.bottomNavbarStyleSplit,
@@ -63,14 +60,14 @@ String bottomNavbarStyleHint(AppLocalizations l10n, BottomNavbarStyle style) =>
     };
 
 IconData bottomNavHubActionIcon(BottomNavHubAction action) => switch (action) {
-      BottomNavHubAction.studios => Icons.business_outlined,
-      BottomNavHubAction.calendar => Icons.calendar_month_outlined,
-      BottomNavHubAction.saved => Icons.download_for_offline,
-      BottomNavHubAction.shuffle => Icons.shuffle_rounded,
-      BottomNavHubAction.syncPlay => Icons.groups_rounded,
-      BottomNavHubAction.quickConnect => Icons.devices,
-      BottomNavHubAction.remoteControl => Icons.settings_remote_rounded,
-    };
+  BottomNavHubAction.studios => Icons.business_outlined,
+  BottomNavHubAction.calendar => Icons.calendar_month_outlined,
+  BottomNavHubAction.saved => Icons.download_for_offline,
+  BottomNavHubAction.shuffle => Icons.shuffle_rounded,
+  BottomNavHubAction.syncPlay => Icons.groups_rounded,
+  BottomNavHubAction.quickConnect => Icons.devices,
+  BottomNavHubAction.remoteControl => Icons.settings_remote_rounded,
+};
 
 /// Filled when active and outlined when not, the way both platforms mark
 /// the current tab. Genres keeps the artwork the other navbars use, so only
@@ -85,21 +82,26 @@ Widget bottomNavTabIconWidget(
       AdaptiveIcon(active ? filled : outlined, size: size, color: color);
 
   return switch (tab) {
-    BottomNavTab.search =>
-      adaptive(Icons.search_rounded, Icons.search_rounded),
-    BottomNavTab.libraries =>
-      adaptive(Icons.video_library_rounded, Icons.video_library_outlined),
-    BottomNavTab.favorites =>
-      adaptive(Icons.favorite_rounded, Icons.favorite_border_rounded),
-    BottomNavTab.liveTv =>
-      adaptive(Icons.live_tv_rounded, Icons.live_tv_outlined),
+    BottomNavTab.search => adaptive(Icons.search_rounded, Icons.search_rounded),
+    BottomNavTab.libraries => adaptive(
+      Icons.video_library_rounded,
+      Icons.video_library_outlined,
+    ),
+    BottomNavTab.favorites => adaptive(
+      Icons.favorite_rounded,
+      Icons.favorite_border_rounded,
+    ),
+    BottomNavTab.liveTv => adaptive(
+      Icons.live_tv_rounded,
+      Icons.live_tv_outlined,
+    ),
     BottomNavTab.genres => Image.asset(
-        'assets/icons/genres.png',
-        width: size,
-        height: size,
-        color: color,
-        fit: BoxFit.contain,
-      ),
+      'assets/icons/genres.png',
+      width: size,
+      height: size,
+      color: color,
+      fit: BoxFit.contain,
+    ),
     BottomNavTab.discover => SeerrIcon(size: size, color: color, solid: active),
   };
 }
@@ -114,42 +116,43 @@ BottomNavItemView bottomNavItemView(
 }) {
   return switch (item.kind) {
     BottomNavItemKind.studios => BottomNavItemView(
-        id: item.id,
-        label: 'Studios',
-        slot: item.slot,
-        icon: (active, size, color) => AdaptiveIcon(
-          active ? Icons.business : Icons.business_outlined,
-          size: size, color: color,
-        ),
+      id: item.id,
+      label: 'Studios',
+      slot: item.slot,
+      icon: (active, size, color) => AdaptiveIcon(
+        active ? Icons.business : Icons.business_outlined,
+        size: size,
+        color: color,
       ),
+    ),
     BottomNavItemKind.home => BottomNavItemView(
-        id: item.id,
-        label: l10n.home,
-        slot: item.slot,
-        icon: (active, size, color) => AdaptiveIcon(
-          active ? Icons.home_rounded : Icons.home_outlined,
-          size: size,
-          color: color,
-        ),
+      id: item.id,
+      label: l10n.home,
+      slot: item.slot,
+      icon: (active, size, color) => AdaptiveIcon(
+        active ? Icons.home_rounded : Icons.home_outlined,
+        size: size,
+        color: color,
       ),
+    ),
     BottomNavItemKind.tab => BottomNavItemView(
-        id: item.id,
-        label: bottomNavTabLabel(l10n, item.tab!),
-        slot: item.slot,
-        icon: (active, size, color) => bottomNavTabIconWidget(
-          item.tab!,
-          active: active,
-          size: size,
-          color: color,
-        ),
+      id: item.id,
+      label: bottomNavTabLabel(l10n, item.tab!),
+      slot: item.slot,
+      icon: (active, size, color) => bottomNavTabIconWidget(
+        item.tab!,
+        active: active,
+        size: size,
+        color: color,
       ),
+    ),
     BottomNavItemKind.you => BottomNavItemView(
-        id: item.id,
-        label: l10n.navYou,
-        slot: item.slot,
-        badge: badge,
-        icon: avatar,
-      ),
+      id: item.id,
+      label: l10n.navYou,
+      slot: item.slot,
+      badge: badge,
+      icon: avatar,
+    ),
   };
 }
 
@@ -190,9 +193,9 @@ void runBottomNavHubAction(BuildContext context, BottomNavHubAction action) {
     case BottomNavHubAction.shuffle:
       showShuffleOverlay(context);
     case BottomNavHubAction.syncPlay:
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const SyncPlayScreen()),
-      );
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const SyncPlayScreen()));
     case BottomNavHubAction.quickConnect:
       showQuickConnectCodeDialog(context);
     case BottomNavHubAction.remoteControl:
@@ -201,8 +204,5 @@ void runBottomNavHubAction(BuildContext context, BottomNavHubAction action) {
 }
 
 /// Uses the bar context so dismissing the hub cannot invalidate navigation.
-Future<void> openBottomNavStudios(BuildContext context) async {
-  final name = await pickSpeshStudio(context);
-  if (!context.mounted || name == null) return;
-  context.navigateTopLevel(streamingServiceRoute(name));
-}
+Future<void> openBottomNavStudios(BuildContext context) =>
+    openSpeshStudio(context);

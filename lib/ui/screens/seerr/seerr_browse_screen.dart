@@ -55,12 +55,16 @@ class SeerrBrowseScreen extends StatefulWidget {
 class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
   SeerrBrowseViewModel? _vm;
   bool _initializing = true;
+  Object? _initError;
+  int _initGeneration = 0;
   final _scrollController = ScrollController();
   final _prefs = GetIt.instance<UserPreferences>();
   SeerrDiscoverItem? _focusedItem;
 
   double get _cardWidth {
-    final size = _prefs.resolveScreenPosterSize(UserPreferences.seerrPosterSize);
+    final size = _prefs.resolveScreenPosterSize(
+      UserPreferences.seerrPosterSize,
+    );
     return size.portraitHeight * (2 / 3);
   }
 
@@ -75,26 +79,48 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
   }
 
   Future<void> _init() async {
-    final repo = await GetIt.instance.getAsync<SeerrRepository>();
-    final vm = SeerrBrowseViewModel(
-      repo,
-      filterId: widget.filterId,
-      mediaType: widget.mediaType ?? 'movie',
-      filterType: widget.filterType,
-    );
-    vm.addListener(_onChanged);
-
-    if (!mounted) {
-      vm.dispose();
-      return;
-    }
-
+    final generation = ++_initGeneration;
     setState(() {
-      _vm = vm;
-      _initializing = false;
+      _initializing = true;
+      _initError = null;
     });
+    try {
+      final repo = await GetIt.instance.getAsync<SeerrRepository>().timeout(
+        const Duration(seconds: 15),
+      );
+      if (!mounted || generation != _initGeneration) return;
+      final vm = SeerrBrowseViewModel(
+        repo,
+        filterId: widget.filterId,
+        mediaType: widget.mediaType ?? 'movie',
+        filterType: widget.filterType,
+      );
+      _vm?.removeListener(_onChanged);
+      _vm?.dispose();
+      vm.addListener(_onChanged);
+      setState(() {
+        _vm = vm;
+        _initializing = false;
+      });
+      unawaited(vm.load());
+    } catch (error) {
+      if (!mounted || generation != _initGeneration) return;
+      setState(() {
+        _initError = error;
+        _initializing = false;
+      });
+    }
+  }
 
-    vm.load();
+  @override
+  void didUpdateWidget(covariant SeerrBrowseScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.filterId != widget.filterId ||
+        oldWidget.mediaType != widget.mediaType ||
+        oldWidget.filterType != widget.filterType) {
+      _focusedItem = null;
+      unawaited(_init());
+    }
   }
 
   void _onScroll() {
@@ -108,6 +134,7 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
 
   @override
   void dispose() {
+    _initGeneration++;
     _allLetterFocusNode.dispose();
     _vm?.removeListener(_onChanged);
     _vm?.dispose();
@@ -138,14 +165,13 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      RequestInitialFocus(
-        child: QuickReturnWrapper(
-          scrollController: _scrollController,
-          topFocusNode: _allLetterFocusNode,
-          child: _buildContent(context),
-        ),
-      );
+  Widget build(BuildContext context) => RequestInitialFocus(
+    child: QuickReturnWrapper(
+      scrollController: _scrollController,
+      topFocusNode: _allLetterFocusNode,
+      child: _buildContent(context),
+    ),
+  );
 
   Widget _buildContent(BuildContext context) {
     final l10n = AppLocalizations.of(context);
@@ -178,12 +204,23 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
   Widget _buildBody() {
     final l10n = AppLocalizations.of(context);
     final vm = _vm;
-    if (_initializing || vm == null || (vm.state.isLoading && vm.state.items.isEmpty)) {
-      final cardWidth = _cardWidth;
-      return SkeletonLibraryGrid(
-        cardWidth: cardWidth,
-        aspectRatio: 2 / 3,
+    if (_initError != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(describeError(_initError!, l10n)),
+            const SizedBox(height: 16),
+            ElevatedButton(onPressed: _init, child: Text(l10n.retry)),
+          ],
+        ),
       );
+    }
+    if (_initializing ||
+        vm == null ||
+        (vm.state.isLoading && vm.state.items.isEmpty)) {
+      final cardWidth = _cardWidth;
+      return SkeletonLibraryGrid(cardWidth: cardWidth, aspectRatio: 2 / 3);
     }
 
     final s = vm.state;
@@ -200,10 +237,7 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => vm.load(),
-              child: Text(l10n.retry),
-            ),
+            ElevatedButton(onPressed: () => vm.load(), child: Text(l10n.retry)),
           ],
         ),
       );
@@ -226,8 +260,9 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
     }
 
     final cardWidth = _cardWidth;
-    final cardExpansion = GetIt.instance<UserPreferences>()
-        .get(UserPreferences.cardFocusExpansion);
+    final cardExpansion = GetIt.instance<UserPreferences>().get(
+      UserPreferences.cardFocusExpansion,
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -236,12 +271,11 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
         final spacing = cardExpansion && !isMobile
             ? MediaCard.focusGap(cardWidth)
             : 12.0;
-        final crossAxisCount = ((constraints.maxWidth -
-                    gridPadding * 2 +
-                    spacing) /
-                (cardWidth + spacing))
-            .floor()
-            .clamp(2, 20);
+        final crossAxisCount =
+            ((constraints.maxWidth - gridPadding * 2 + spacing) /
+                    (cardWidth + spacing))
+                .floor()
+                .clamp(2, 20);
 
         final cellWidth =
             (constraints.maxWidth -
@@ -265,7 +299,12 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
           controller: _scrollController,
           slivers: [
             SliverPadding(
-              padding: EdgeInsets.fromLTRB(gridPadding, topPadding, gridPadding, 16),
+              padding: EdgeInsets.fromLTRB(
+                gridPadding,
+                topPadding,
+                gridPadding,
+                16,
+              ),
               sliver: SliverGrid(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: crossAxisCount,
@@ -276,19 +315,20 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
                 delegate: SliverChildBuilderDelegate((context, index) {
                   final item = s.items[index];
                   final focusColor = GetIt.instance<UserPreferences>()
-                    .get(UserPreferences.focusColor).colorValue;
-                  final cardExpansion = GetIt.instance<UserPreferences>()
-                      .get(UserPreferences.cardFocusExpansion);
+                      .get(UserPreferences.focusColor)
+                      .colorValue;
+                  final cardExpansion = GetIt.instance<UserPreferences>().get(
+                    UserPreferences.cardFocusExpansion,
+                  );
                   final resolvedFocusColor = Color(focusColor);
-                    final suppressFocusGlow =
+                  final suppressFocusGlow =
                       ThemeRegistry.active.borders.focusGlow.isNotEmpty;
                   return MediaCard(
                     title: item.displayTitle,
                     subtitle: _cardSubtitle(item, l10n),
-                    imageUrl:
-                        item.posterPath != null
-                            ? '$_tmdbPosterBase${item.posterPath}'
-                            : null,
+                    imageUrl: item.posterPath != null
+                        ? '$_tmdbPosterBase${item.posterPath}'
+                        : null,
                     width: double.infinity,
                     aspectRatio: 2 / 3,
                     seerrMediaType: item.mediaType,
@@ -317,14 +357,12 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
                               _vm?.loadMore();
                             }
                           },
-                    onHoverStart:
-                        isMobile
-                            ? null
-                            : () => setState(() => _focusedItem = item),
-                    onHoverEnd:
-                        isMobile
-                            ? null
-                            : () => setState(() => _focusedItem = null),
+                    onHoverStart: isMobile
+                        ? null
+                        : () => setState(() => _focusedItem = item),
+                    onHoverEnd: isMobile
+                        ? null
+                        : () => setState(() => _focusedItem = null),
                     onTap: () {
                       final mt = item.mediaType ?? widget.mediaType ?? 'movie';
                       context.push(
@@ -353,7 +391,10 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
     );
   }
 
-  static String? _cardSubtitle(SeerrDiscoverItem item, [AppLocalizations? l10n]) {
+  static String? _cardSubtitle(
+    SeerrDiscoverItem item, [
+    AppLocalizations? l10n,
+  ]) {
     final parts = <String>[];
     final date = item.releaseDate ?? item.firstAirDate;
     if (date != null && date.length >= 4) parts.add(date.substring(0, 4));
@@ -370,11 +411,17 @@ class _SeerrBrowseScreenState extends State<SeerrBrowseScreen> {
   }
 
   void _showSortDialog(BuildContext context) {
-    showFocusRestoringDialog(context: context, builder: (_) => _SeerrSortDialog(vm: _vm!));
+    showFocusRestoringDialog(
+      context: context,
+      builder: (_) => _SeerrSortDialog(vm: _vm!),
+    );
   }
 
   void _showSettingsDialog(BuildContext context) {
-    showFocusRestoringDialog(context: context, builder: (_) => _SeerrSettingsDialog(prefs: _prefs));
+    showFocusRestoringDialog(
+      context: context,
+      builder: (_) => _SeerrSettingsDialog(prefs: _prefs),
+    );
   }
 }
 
@@ -442,10 +489,9 @@ class _SeerrBrowseHeader extends StatelessWidget {
           ],
           const SizedBox(height: 6),
           Row(
-            mainAxisAlignment:
-                (isMobile && !showInlineFilters)
-                    ? MainAxisAlignment.center
-                    : MainAxisAlignment.start,
+            mainAxisAlignment: (isMobile && !showInlineFilters)
+                ? MainAxisAlignment.center
+                : MainAxisAlignment.start,
             children: [
               _ToolbarButton(icon: Icons.home, onTap: onHome),
               const SizedBox(width: 4),
@@ -495,28 +541,27 @@ class _FocusedItemHud extends StatelessWidget {
       height: 56,
       child: AnimatedSwitcher(
         duration: const Duration(milliseconds: 200),
-        child:
-            item == null
-                ? const SizedBox.shrink(key: ValueKey('empty'))
-                : Column(
-                  key: ValueKey(item!.id),
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      item!.displayTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: AppColorScheme.onSurface,
-                      ),
+        child: item == null
+            ? const SizedBox.shrink(key: ValueKey('empty'))
+            : Column(
+                key: ValueKey(item!.id),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    item!.displayTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: AppColorScheme.onSurface,
                     ),
-                    const SizedBox(height: 2),
-                    _MetadataRow(item: item!),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 2),
+                  _MetadataRow(item: item!),
+                ],
+              ),
       ),
     );
   }
@@ -552,7 +597,9 @@ class _MetadataRow extends StatelessWidget {
 
     final status = item.mediaInfo?.status;
     if (status == 4 || status == 5) {
-      children.add(_statusBadge(l10n.seerrAvailableStatus, AppColorScheme.statusAvailable));
+      children.add(
+        _statusBadge(l10n.seerrAvailableStatus, AppColorScheme.statusAvailable),
+      );
     } else if (status == 2 || status == 3) {
       children.add(_statusBadge(l10n.seerrRequestedStatus, _seerrAccent));
     }
@@ -761,16 +808,15 @@ class _AlphaPickerBar extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children:
-            _letters.map((letter) {
-              final isSelected = selected == letter;
-              return _AlphaLetterButton(
-                label: letter.isEmpty ? l10n.all : letter,
-                isSelected: isSelected,
-                onTap: () => onChanged(letter),
-                focusNode: letter.isEmpty ? allFocusNode : null,
-              );
-            }).toList(),
+        children: _letters.map((letter) {
+          final isSelected = selected == letter;
+          return _AlphaLetterButton(
+            label: letter.isEmpty ? l10n.all : letter,
+            isSelected: isSelected,
+            onTap: () => onChanged(letter),
+            focusNode: letter.isEmpty ? allFocusNode : null,
+          );
+        }).toList(),
       ),
     );
   }
@@ -797,10 +843,11 @@ class _AlphaLetterButtonState extends State<_AlphaLetterButton>
     with FocusStateMixin {
   @override
   Widget build(BuildContext context) {
-    final focusColor =
-        Color(
-          GetIt.instance<UserPreferences>().get(UserPreferences.focusColor).colorValue,
-        );
+    final focusColor = Color(
+      GetIt.instance<UserPreferences>()
+          .get(UserPreferences.focusColor)
+          .colorValue,
+    );
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setHovered(true),
@@ -828,15 +875,14 @@ class _AlphaLetterButtonState extends State<_AlphaLetterButton>
                   ? AppColorScheme.onSurface.withAlpha(26)
                   : null,
               borderRadius: AppRadius.circular(4),
-              border:
-                  showFocusBorder
-                      ? Border.fromBorderSide(
-                          ThemeRegistry.active.borders.focusBorder.copyWith(
-                            color: focusColor,
-                            width: 1.5,
-                          ),
-                        )
-                      : null,
+              border: showFocusBorder
+                  ? Border.fromBorderSide(
+                      ThemeRegistry.active.borders.focusBorder.copyWith(
+                        color: focusColor,
+                        width: 1.5,
+                      ),
+                    )
+                  : null,
             ),
             child: Text(
               widget.label,
@@ -844,12 +890,12 @@ class _AlphaLetterButtonState extends State<_AlphaLetterButton>
               softWrap: false,
               style: TextStyle(
                 fontSize: 15,
-                fontWeight:
-                    widget.isSelected ? FontWeight.w700 : FontWeight.w500,
-                color:
-                    widget.isSelected
-                        ? _seerrAccent
-                        : AppColorScheme.onSurface.withAlpha(140),
+                fontWeight: widget.isSelected
+                    ? FontWeight.w700
+                    : FontWeight.w500,
+                color: widget.isSelected
+                    ? _seerrAccent
+                    : AppColorScheme.onSurface.withAlpha(140),
               ),
             ),
           ),
@@ -870,11 +916,13 @@ class _ToolbarButton extends StatefulWidget {
 }
 
 class _ToolbarButtonState extends State<_ToolbarButton> with FocusStateMixin {
-
   @override
   Widget build(BuildContext context) {
-    final focusColor =
-        Color(GetIt.instance<UserPreferences>().get(UserPreferences.focusColor).colorValue);
+    final focusColor = Color(
+      GetIt.instance<UserPreferences>()
+          .get(UserPreferences.focusColor)
+          .colorValue,
+    );
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setHovered(true),
@@ -1262,11 +1310,7 @@ class _SeerrSortDialogState extends State<_SeerrSortDialog> {
                 color: checked ? _seerrAccent : Colors.transparent,
               ),
               child: checked
-                  ? Icon(
-                      Icons.check,
-                      size: 14,
-                      color: AppColorScheme.onSurface,
-                    )
+                  ? Icon(Icons.check, size: 14, color: AppColorScheme.onSurface)
                   : null,
             ),
             const SizedBox(width: 12),
@@ -1314,19 +1358,18 @@ class _SeerrSortDialogState extends State<_SeerrSortDialog> {
                 ),
                 color: selected ? _seerrAccent : Colors.transparent,
               ),
-              child:
-                  selected
-                      ? Center(
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColorScheme.onSurface,
-                          ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColorScheme.onSurface,
                         ),
-                      )
-                      : null,
+                      ),
+                    )
+                  : null,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1363,8 +1406,9 @@ class _SeerrSettingsDialogState extends State<_SeerrSettingsDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final current =
-        widget.prefs.resolveScreenPosterSize(UserPreferences.seerrPosterSize);
+    final current = widget.prefs.resolveScreenPosterSize(
+      UserPreferences.seerrPosterSize,
+    );
     final dialogWidth = (MediaQuery.sizeOf(context).width - 32).clamp(
       280.0,
       380.0,
@@ -1426,12 +1470,13 @@ class _SeerrSettingsDialogState extends State<_SeerrSettingsDialog> {
     );
   }
 
-  static String _posterSizeLabel(PosterSize size, AppLocalizations l10n) => switch (size) {
-    PosterSize.small => l10n.small,
-    PosterSize.medium => l10n.medium,
-    PosterSize.large => l10n.large,
-    PosterSize.extraLarge || PosterSize.grandparents => l10n.extraLarge,
-  };
+  static String _posterSizeLabel(PosterSize size, AppLocalizations l10n) =>
+      switch (size) {
+        PosterSize.small => l10n.small,
+        PosterSize.medium => l10n.medium,
+        PosterSize.large => l10n.large,
+        PosterSize.extraLarge || PosterSize.grandparents => l10n.extraLarge,
+      };
 
   Widget _settingsRadioTile({
     required String label,
@@ -1459,19 +1504,18 @@ class _SeerrSettingsDialogState extends State<_SeerrSettingsDialog> {
                 ),
                 color: selected ? _seerrAccent : Colors.transparent,
               ),
-              child:
-                  selected
-                      ? Center(
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColorScheme.onSurface,
-                          ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColorScheme.onSurface,
                         ),
-                      )
-                      : null,
+                      ),
+                    )
+                  : null,
             ),
             const SizedBox(width: 12),
             Expanded(
