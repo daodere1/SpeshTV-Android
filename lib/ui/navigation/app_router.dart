@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../screens/auth/spesh_profiles_screen.dart';
+
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:playback_core/playback_core.dart';
@@ -191,6 +194,12 @@ final appRouter = GoRouter(
       return Destinations.startup;
     }
 
+    if (path == '/profiles') return null;
+    if (session.needsSpeshProfile) {
+      session.rememberProfileDestination(state.uri.toString());
+      return '/profiles';
+    }
+
     // Has to sit above every other rule and below the signed-out one: the
     // wizard needs a user to set up, and nothing else is worth showing until
     // it has had its turn. Exempting its own path is what stops it redirecting
@@ -232,6 +241,7 @@ final appRouter = GoRouter(
     return null;
   },
   routes: [
+    GoRoute(path: "/profiles", builder: (_, _) => const SpeshProfilesScreen()),
     // Auth
     GoRoute(
       path: Destinations.startup,
@@ -695,7 +705,11 @@ final appRouter = GoRouter(
       builder: (context, state) {
         final videoId = state.uri.queryParameters['videoId'];
         final url = state.uri.queryParameters['url'];
-        return TrailerPlayerScreen(videoId: videoId, trailerUrl: url, retryAlternative: state.extra == true);
+        return TrailerPlayerScreen(
+          videoId: videoId,
+          trailerUrl: url,
+          retryAlternative: state.extra == true,
+        );
       },
     ),
     GoRoute(

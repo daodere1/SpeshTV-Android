@@ -1,5 +1,7 @@
+import 'image_source.dart';
+
 import 'dart:io';
-import 'package:cached_network_image/cached_network_image.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
@@ -15,7 +17,9 @@ import '../../util/image_mime.dart';
 import '../../util/platform_detection.dart';
 import '../../auth/repositories/user_repository.dart';
 import '../../auth/repositories/session_repository.dart';
+
 import 'package:dio/dio.dart';
+
 import 'adaptive/adaptive_dialog.dart';
 import 'focus/focusable_wrapper.dart';
 import 'overlay_sheet.dart';
@@ -507,7 +511,8 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
   }
 
   Future<void> _checkLibrariesWriteAccess() async {
-    final isAdmin = GetIt.instance<UserRepository>().currentUser?.isAdministrator ?? false;
+    final isAdmin =
+        GetIt.instance<UserRepository>().currentUser?.isAdministrator ?? false;
     if (!isAdmin) return;
 
     final sessionRepo = GetIt.instance<SessionRepository>();
@@ -522,9 +527,9 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
     try {
       final response = await dio.get(
         '${client.baseUrl}/Moonfin/Libraries/CheckWriteAccess',
-        options: Options(headers: {
-          'Authorization': 'MediaBrowser Token="$token"',
-        }),
+        options: Options(
+          headers: {'Authorization': 'MediaBrowser Token="$token"'},
+        ),
       );
       sessionRepo.hasCheckedWriteAccess = true;
 
@@ -551,10 +556,14 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
           }
 
           if (matchingFailedReport != null && mounted) {
-            final libraryName = matchingFailedReport['LibraryName'] ?? 'Library';
+            final libraryName =
+                matchingFailedReport['LibraryName'] ?? 'Library';
             final l10n = AppLocalizations.of(context);
             await _showWriteAccessWarningDialog(
-              l10n.libraryWriteAccessProactiveBody(libraryName.toString(), matchingFailedPath ?? ''),
+              l10n.libraryWriteAccessProactiveBody(
+                libraryName.toString(),
+                matchingFailedPath ?? '',
+              ),
             );
           }
         }
@@ -600,9 +609,8 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
         'upload' => l10n.imageUploadFailed(detail),
         _ => detail,
       };
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -653,7 +661,8 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
 
   Future<void> _fetchRemoteImages(String category) async {
     if (!mounted) return;
-    final isGenre = _item.type?.toLowerCase() == 'genre' ||
+    final isGenre =
+        _item.type?.toLowerCase() == 'genre' ||
         _item.type?.toLowerCase() == 'musicgenre';
     if (isGenre) {
       setState(() {
@@ -932,9 +941,8 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
           _hasChanged = true;
           _actionInProgress.remove(category);
         });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(l10n.imageUploadSuccess)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.imageUploadSuccess)));
       }
     } catch (e) {
       if (mounted) {
@@ -1555,9 +1563,8 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
     final remoteList = _remoteImages[category] ?? [];
     final error = _categoryErrors[category];
     final dims = _getImageDimensions(category);
-    final interfaceLang = Localizations.localeOf(
-      context,
-    ).languageCode.toLowerCase();
+    final interfaceLang = Localizations.localeOf(context).languageCode
+        .toLowerCase();
 
     final filteredRemoteList = remoteList.where((img) {
       if (!_shouldShowImageByLanguage(img, interfaceLang)) {
@@ -1745,7 +1752,9 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
             itemCount: totalCount,
             itemBuilder: (context, i) {
               final isFirst = (i == 0);
-              final cardNode = isFirst ? _getFirstCardFocusNode(category) : null;
+              final cardNode = isFirst
+                  ? _getFirstCardFocusNode(category)
+                  : null;
 
               if (i < currentCount) {
                 if (currentTags.isEmpty) {
@@ -1804,9 +1813,8 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
     final remoteList = _remoteImages[category] ?? [];
     final error = _categoryErrors[category];
     final dims = _getImageDimensions(category);
-    final interfaceLang = Localizations.localeOf(
-      context,
-    ).languageCode.toLowerCase();
+    final interfaceLang = Localizations.localeOf(context).languageCode
+        .toLowerCase();
 
     final filteredRemoteList = remoteList.where((img) {
       if (!_shouldShowImageByLanguage(img, interfaceLang)) {
@@ -2367,7 +2375,7 @@ class _ChangeArtworkDialogState extends State<ChangeArtworkDialog> {
             // Resolve the actual aspect ratio once
             if (!isResolvingStarted) {
               isResolvingStarted = true;
-              final imageProvider = CachedNetworkImageProvider(previewUrl);
+              final imageProvider = offlineAwareImageProvider(previewUrl);
               final imageStream = imageProvider.resolve(
                 const ImageConfiguration(),
               );

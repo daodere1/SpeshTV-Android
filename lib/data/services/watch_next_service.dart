@@ -1,3 +1,5 @@
+import 'spesh_session_privacy.dart';
+
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -23,7 +25,7 @@ class WatchNextService {
   bool get _enabled => PlatformDetection.isAndroid && PlatformDetection.isTV;
 
   void update(List<HomeRow> rows) {
-    if (!_enabled) return;
+    if (!_enabled || SpeshSessionPrivacy.managed) return;
     _debounce?.cancel();
     _debounce = Timer(_debounceDelay, () => unawaited(_publish(rows)));
   }
@@ -36,7 +38,7 @@ class WatchNextService {
   }
 
   void schedulePeriodicRefresh() {
-    if (!_enabled) return;
+    if (!_enabled || SpeshSessionPrivacy.managed) return;
     unawaited(_channel.invokeMethod('schedulePeriodic').catchError((_) {}));
   }
 
@@ -46,6 +48,7 @@ class WatchNextService {
   }
 
   Future<void> _publish(List<HomeRow> rows) async {
+    if (SpeshSessionPrivacy.managed) return;
     try {
       // Built payloads embed DateTime.now() fallbacks, so change detection
       // uses the source rows instead.
@@ -62,6 +65,7 @@ class WatchNextService {
         return;
       }
 
+      if (SpeshSessionPrivacy.managed) return;
       await CarArtwork.instance.persistHosts();
       await _channel.invokeMethod('publish', {'items': items});
       _lastPublishedSignature = signature;
@@ -147,12 +151,15 @@ class WatchNextService {
     final resumeMs = item.playbackPositionTicks != null
         ? item.playbackPositionTicks! ~/ 10000
         : 0;
-    final durationMs =
-        item.runTimeTicks != null ? item.runTimeTicks! ~/ 10000 : null;
+    final durationMs = item.runTimeTicks != null
+        ? item.runTimeTicks! ~/ 10000
+        : null;
 
-    final lastPlayed =
-        parseServerDate(item.rawData['UserData']?['LastPlayedDate']);
-    final lastEngagementMs = lastPlayed?.millisecondsSinceEpoch ??
+    final lastPlayed = parseServerDate(
+      item.rawData['UserData']?['LastPlayedDate'],
+    );
+    final lastEngagementMs =
+        lastPlayed?.millisecondsSinceEpoch ??
         (DateTime.now().millisecondsSinceEpoch - index);
 
     return {
@@ -163,7 +170,8 @@ class WatchNextService {
       if (isEpisode) 'episodeTitle': item.name,
       if (isEpisode && item.parentIndexNumber != null)
         'seasonNumber': item.parentIndexNumber,
-      if (isEpisode && item.indexNumber != null) 'episodeNumber': item.indexNumber,
+      if (isEpisode && item.indexNumber != null)
+        'episodeNumber': item.indexNumber,
       'description': ?item.overview,
       'posterUri': ?poster,
       'resumePositionMs': resumeMs,
@@ -184,7 +192,9 @@ class WatchNextService {
     }
     final parentThumbId = item.parentThumbItemId;
     final parentThumb = item.parentThumbImageTag;
-    if (parentThumbId != null && parentThumb != null && parentThumb.isNotEmpty) {
+    if (parentThumbId != null &&
+        parentThumb != null &&
+        parentThumb.isNotEmpty) {
       return imageApi.getThumbImageUrl(
         parentThumbId,
         maxWidth: 960,
@@ -233,7 +243,11 @@ class WatchNextService {
     }
     final backdrops = item.backdropImageTags;
     if (backdrops.isNotEmpty) {
-      return imageApi.getBackdropImageUrl(item.id, maxWidth: 960, tag: backdrops.first);
+      return imageApi.getBackdropImageUrl(
+        item.id,
+        maxWidth: 960,
+        tag: backdrops.first,
+      );
     }
     final tag = item.primaryImageTag;
     if (tag != null && tag.isNotEmpty) {
@@ -250,11 +264,19 @@ class WatchNextService {
     final seriesId = item.seriesId;
     final seriesThumb = item.seriesThumbImageTag;
     if (seriesId != null && seriesThumb != null && seriesThumb.isNotEmpty) {
-      return imageApi.getThumbImageUrl(seriesId, maxWidth: 960, tag: seriesThumb);
+      return imageApi.getThumbImageUrl(
+        seriesId,
+        maxWidth: 960,
+        tag: seriesThumb,
+      );
     }
     final seriesPrimary = item.seriesPrimaryImageTag;
     if (seriesId != null && seriesPrimary != null && seriesPrimary.isNotEmpty) {
-      return imageApi.getPrimaryImageUrl(seriesId, maxHeight: 720, tag: seriesPrimary);
+      return imageApi.getPrimaryImageUrl(
+        seriesId,
+        maxHeight: 720,
+        tag: seriesPrimary,
+      );
     }
     return null;
   }

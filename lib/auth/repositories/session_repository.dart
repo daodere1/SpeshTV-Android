@@ -1,5 +1,9 @@
 import 'dart:async';
 
+import '../../data/services/spesh_profile_service.dart';
+import '../../data/services/spesh_session_privacy.dart';
+import '../../data/services/theme_music_service.dart';
+
 import 'package:custom_tv_text_field/custom_tv_text_field.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -116,6 +120,217 @@ class SessionRepository {
   final PluginSyncService _pluginSyncService;
   final _logger = Logger();
 
+  PrivateUser? _speshOwner;
+  Future<void>? _postLoginTask;
+  bool _profileSwitching = false;
+  final Set<Future<void>> _remoteCommandFlights = {};
+  bool _profileChosen = false;
+  bool _profileCompatibilityMode = false;
+  String? selectedSpeshProfileId;
+  String? selectedSpeshProfileName;
+  String? selectedSpeshProfileAvatar;
+  String? _profileDestination;
+  bool get supportsSpeshProfiles =>
+      _speshOwner != null &&
+      _serverRepository.getServer(_activeServerId ?? '')?.serverType ==
+          ServerType.jellyfin;
+  bool get needsSpeshProfile => supportsSpeshProfiles && !_profileChosen;
+  bool get isSpeshProfileActive =>
+      supportsSpeshProfiles && _profileChosen && !_profileCompatibilityMode;
+  bool get isManagedSpeshProfile =>
+      isSpeshProfileActive && selectedSpeshProfileId != 'main';
+  String? get speshOwnerId => _speshOwner?.id;
+  String get speshOwnerToken => _speshOwner?.accessToken ?? '';
+  void rememberProfileDestination(String location) {
+    if (_profileDestination == null &&
+        location != '/profiles' &&
+        location != Destinations.startup)
+      _profileDestination = location;
+  }
+
+  String takeProfileDestination() {
+    final destination = _profileDestination;
+    _profileDestination = null;
+    return destination ?? Destinations.home;
+  }
+
+  SpeshViewingProfilesApi createSpeshProfilesApi() => SpeshViewingProfilesApi(
+    baseUrl: GetIt.instance<MediaServerClient>().baseUrl,
+    ownerToken: speshOwnerToken,
+    deviceInfo: GetIt.instance<DeviceInfo>(),
+  );
+
+  Future<void> continueWithoutSpeshProfiles() async {
+    if (isManagedSpeshProfile) await _restoreSpeshOwner();
+    _profileChosen = true;
+    _profileCompatibilityMode = true;
+    selectedSpeshProfileId = 'main';
+    selectedSpeshProfileName = _speshOwner?.name;
+    selectedSpeshProfileAvatar = 'blue';
+  }
+
+  /// Complete all old-user reporting before Core's Select changes the device session.
+  Future<void> selectSpeshProfile(
+    SpeshViewingProfile profile,
+    SpeshViewingProfilesApi api,
+  ) async {
+    if (_profileSwitching)
+      throw StateError('A profile switch is already running.');
+    final owner = _speshOwner;
+    final serverId = _activeServerId;
+    if (owner == null || serverId == null) throw StateError('Sign in first.');
+    _profileSwitching = true;
+    _remoteNavigationGeneration++;
+    _remoteVolumeGeneration++;
+    _setState(SessionState.switching);
+    MediaServerClient? candidate;
+    try {
+      final selection = await api.select(
+        profile,
+        beforeSelect: () async {
+          await _postLoginTask;
+          await Future.wait(_remoteCommandFlights.toList());
+          if (GetIt.instance.isRegistered<PlaybackManager>()) {
+            await GetIt.instance<PlaybackManager>().stop(userInitiated: false);
+          }
+          if (GetIt.instance.isRegistered<CastService>()) {
+            final cast = GetIt.instance<CastService>();
+            if (cast.activeKind != null) await cast.stop(cast.activeKind!);
+          }
+          if (GetIt.instance.isRegistered<SyncPlayManager>())
+            await GetIt.instance<SyncPlayManager>().leaveGroup();
+          if (GetIt.instance.isRegistered<ThemeMusicService>())
+            GetIt.instance<ThemeMusicService>().stop();
+        },
+      );
+      final token = selection.validatedToken(
+        profile,
+        owner.id,
+        owner.accessToken,
+      );
+      final managed = profile.id != 'main';
+      final server = _serverRepository.getServer(serverId)!;
+      candidate = _clientFactory.createProfileClient(
+        serverType: server.serverType,
+        baseUrl: GetIt.instance<MediaServerClient>().baseUrl,
+      );
+      candidate.accessToken = token;
+      candidate.userId = selection.userId;
+      final validated = await candidate.usersApi.getCurrentUser();
+      if (validated.id != selection.userId ||
+          (managed && (validated.policy?.isAdministrator ?? false))) {
+        throw StateError('Profile identity validation failed.');
+      }
+      final user = managed
+          ? PrivateUser(
+              id: selection.userId,
+              name: profile.name,
+              serverId: serverId,
+              accessToken: token,
+              lastUsed: DateTime.now(),
+              ephemeralSession: true,
+            )
+          : owner;
+      final oldClient = _clientFactory.getClientIfExists(serverId)!;
+      final oldUser = _userRepository.currentUser;
+      final oldProfile = (
+        selectedSpeshProfileId,
+        selectedSpeshProfileName,
+        selectedSpeshProfileAvatar,
+        _profileChosen,
+        _profileCompatibilityMode,
+      );
+      try {
+        selectedSpeshProfileId = profile.id;
+        selectedSpeshProfileName = profile.name;
+        selectedSpeshProfileAvatar = profile.avatar;
+        _profileChosen = true;
+        _profileCompatibilityMode = false;
+        SpeshSessionPrivacy.activate(managed ? token : null);
+        await _installSpeshIdentity(candidate, user, managed: managed);
+        oldClient.dispose();
+        candidate = null;
+      } catch (_) {
+        selectedSpeshProfileId = oldProfile.$1;
+        selectedSpeshProfileName = oldProfile.$2;
+        selectedSpeshProfileAvatar = oldProfile.$3;
+        _profileChosen = oldProfile.$4;
+        _profileCompatibilityMode = oldProfile.$5;
+        SpeshSessionPrivacy.activate(
+          oldUser is PrivateUser && oldUser.ephemeralSession
+              ? oldUser.accessToken
+              : null,
+        );
+        if (oldUser is PrivateUser)
+          await _installSpeshIdentity(
+            oldClient,
+            oldUser,
+            managed: oldUser.ephemeralSession,
+          );
+        rethrow;
+      }
+    } finally {
+      candidate?.dispose();
+      _profileSwitching = false;
+      _setState(SessionState.ready);
+    }
+  }
+
+  Future<void> _installSpeshIdentity(
+    MediaServerClient client,
+    PrivateUser user, {
+    required bool managed,
+  }) async {
+    _remoteVolumeGeneration++;
+    _remoteNavigationGeneration++;
+    _remoteSearch?.close();
+    await _remoteCommandSubscription?.cancel();
+    await _pluginEventSubscription?.cancel();
+    await _socketConnectionSubscription?.cancel();
+    _socketHandler.disconnect();
+    _cancelSocketIdleTimer();
+    _pluginSyncService.resetState();
+    if (GetIt.instance.isRegistered<AchievementsService>())
+      GetIt.instance<AchievementsService>().reset();
+    if (GetIt.instance.isRegistered<ServerMessagesService>())
+      GetIt.instance<ServerMessagesService>().clear();
+    await LastPlaybackSessionStore().clear();
+    // Set identity before any newly registered repository can consult it.
+    _activeUserId = user.id;
+    _clientFactory.replaceProfileClient(user.serverId, client);
+    setActiveServerClient(client, ephemeralSession: managed);
+    _userRepository.setCurrentUser(user);
+    await resetUserScopedSingletons();
+    setActiveStreamResolver(client);
+    userDataSync.bindTo(_socketHandler.events, userId: user.id);
+    _socketSuspended = false;
+    _socketHandler.connectTo(client);
+    _bindRemoteCommandHandling();
+    _bindCapabilityReporting(client);
+    _bindPluginEventHandling(client);
+    _refreshCarBrowseTree(signedIn: true);
+  }
+
+  Future<void> _restoreSpeshOwner() async {
+    final owner = _speshOwner;
+    if (owner == null || !isManagedSpeshProfile) return;
+    await _stopPlaybackForSessionChange();
+    final server = _serverRepository.getServer(owner.serverId)!;
+    final client = _clientFactory.createProfileClient(
+      serverType: server.serverType,
+      baseUrl: server.address,
+    );
+    client.accessToken = owner.accessToken;
+    client.userId = owner.id;
+    final old = _clientFactory.getClientIfExists(owner.serverId);
+    _profileChosen = false;
+    _profileCompatibilityMode = false;
+    selectedSpeshProfileId = null;
+    SpeshSessionPrivacy.activate(null);
+    await _installSpeshIdentity(client, owner, managed: false);
+    old?.dispose();
+  }
+
   String? _activeServerId;
   String? _activeUserId;
   SessionState _state = SessionState.ready;
@@ -160,7 +375,7 @@ class SessionRepository {
   Future<void> applyAutoLoginForBehavior(UserSelectBehavior behavior) async {
     if (behavior == UserSelectBehavior.currentUser) {
       final serverId = _activeServerId;
-      final userId = _activeUserId;
+      final userId = speshOwnerId ?? _activeUserId;
       if (serverId != null && userId != null) {
         await _authPrefs.setAutoLogin(serverId, userId);
       }
@@ -173,7 +388,7 @@ class SessionRepository {
   bool get activeUserIsAutoLoginTarget =>
       _activeUserId != null &&
       _activeServerId != null &&
-      _authPrefs.savedAutoLoginUserId == _activeUserId &&
+      _authPrefs.savedAutoLoginUserId == (speshOwnerId ?? _activeUserId) &&
       _authPrefs.savedAutoLoginServerId == _activeServerId;
 
   // the name of the saved auto-login user or null if none.
@@ -237,6 +452,13 @@ class SessionRepository {
     String? password,
     bool validateToken = false,
   }) async {
+    await _postLoginTask;
+    await _restoreSpeshOwner();
+    _profileChosen = false;
+    _profileCompatibilityMode = false;
+    selectedSpeshProfileId = null;
+    selectedSpeshProfileName = null;
+    selectedSpeshProfileAvatar = null;
     if (serverId != _activeServerId || userId != _activeUserId) {
       await _stopPlaybackForSessionChange();
     }
@@ -321,7 +543,7 @@ class SessionRepository {
     }
 
     setActiveServerClient(client);
-    resetUserScopedSingletons();
+    await resetUserScopedSingletons();
     setActiveStreamResolver(client);
     _cancelSocketIdleTimer();
     // A headless boot has no UI to serve, and car browse, playback, and
@@ -340,6 +562,7 @@ class SessionRepository {
     _activeServerId = serverId;
     _activeUserId = userId;
 
+    _speshOwner = user.copyWith(accessToken: accessToken);
     _userRepository.setCurrentUser(user);
     await _authPrefs.setLastServerId(serverId);
     await _authPrefs.setLastUserId(userId);
@@ -355,6 +578,7 @@ class SessionRepository {
       preFetchedServerUser: validatedUser,
     ).catchError((_) {});
 
+    _postLoginTask = postLoginSyncFuture;
     if (shouldPrioritizeInitialSync) {
       // Give first-login server sync a short head start so Home can build
       // from synced preferences, without blocking startup indefinitely.
@@ -427,6 +651,7 @@ class SessionRepository {
           canManageLiveTv: canManageLiveTv,
         );
         await _authStore.putUser(updatedUser);
+        _speshOwner = updatedUser.copyWith(accessToken: client.accessToken);
         _userRepository.setCurrentUser(updatedUser);
       }
 
@@ -438,6 +663,7 @@ class SessionRepository {
       }
     } on DioException catch (e) {
       if (e.response?.statusCode == 401) {
+        _postLoginTask = null; // Teardown is called from inside this task.
         _logger.w('Access token expired or unauthorized. Logging out.');
         await destroyCurrentSession(tokenKnownInvalid: true);
         appRouter.go(
@@ -454,6 +680,7 @@ class SessionRepository {
       final achievements = GetIt.instance<AchievementsService>();
       unawaited(
         achievements.refreshAvailability(client).then((available) {
+          if (client.userId != _activeUserId || isManagedSpeshProfile) return;
           if (available) achievements.startPolling(client);
         }),
       );
@@ -583,6 +810,14 @@ class SessionRepository {
   }
 
   Future<void> destroyCurrentSession({bool tokenKnownInvalid = false}) async {
+    await _postLoginTask;
+    if (isManagedSpeshProfile) {
+      await _restoreSpeshOwner();
+      if (tokenKnownInvalid) {
+        _router.go('/profiles');
+        return;
+      }
+    }
     await _stopPlaybackForSessionChange();
     _remoteVolumeGeneration++;
     _remoteNavigationGeneration++;
@@ -643,6 +878,11 @@ class SessionRepository {
       await _authPrefs.clearAutoLogin();
     }
 
+    _speshOwner = null;
+    _profileChosen = false;
+    _profileCompatibilityMode = false;
+    selectedSpeshProfileId = null;
+    SpeshSessionPrivacy.activate(null);
     _activeServerId = null;
     _activeUserId = null;
     _hasCheckedWriteAccess = false;
@@ -658,7 +898,7 @@ class SessionRepository {
     try {
       GetIt.instance<HeadlessSessionBootstrap>().invalidate();
       GetIt.instance<MediaBrowseService>().clearCache();
-      if (signedIn) {
+      if (signedIn && !isManagedSpeshProfile) {
         WatchNextService().schedulePeriodicRefresh();
         unawaited(TvChannelsService().publish());
       } else {
@@ -672,7 +912,9 @@ class SessionRepository {
         GetIt.instance<MoonfinAudioHandler>().notifyChildrenChanged();
       }
       if (GetIt.instance.isRegistered<CarPlayService>()) {
-        GetIt.instance<CarPlayService>().notifySignInChanged(signedIn: signedIn);
+        GetIt.instance<CarPlayService>().notifySignInChanged(
+          signedIn: signedIn,
+        );
       }
     } catch (_) {}
   }
@@ -732,7 +974,14 @@ class SessionRepository {
     } catch (_) {}
   }
 
-  Future<void> _handleRemoteCommand(ServerWebSocketMessage event) async {
+  Future<void> _handleRemoteCommand(ServerWebSocketMessage event) {
+    if (_profileSwitching) return Future.value();
+    final flight = _dispatchRemoteCommand(event);
+    _remoteCommandFlights.add(flight);
+    return flight.whenComplete(() => _remoteCommandFlights.remove(flight));
+  }
+
+  Future<void> _dispatchRemoteCommand(ServerWebSocketMessage event) async {
     switch (event) {
       case PlayMessage():
         await _handlePlayMessage(event);
@@ -1170,8 +1419,7 @@ class SessionRepository {
           // Another controller's text has no Search to land in yet, so it
           // opens one. Edits from a phone whose input session ended stay
           // dropped.
-          final opened = RemoteSearchSession(null)
-            ..receive(message.arguments);
+          final opened = RemoteSearchSession(null)..receive(message.arguments);
           await _openRemoteSearch(manager, opened);
         }
       default:

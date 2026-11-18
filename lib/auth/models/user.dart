@@ -20,6 +20,7 @@ class PrivateUser extends User {
   @override
   final String serverId;
   final String accessToken;
+  final bool ephemeralSession;
 
   /// A Plex user's own plex.tv token, which lists and switches Plex Home
   /// members. Their server token is [accessToken].
@@ -44,6 +45,7 @@ class PrivateUser extends User {
     required this.serverId,
     required this.accessToken,
     required this.lastUsed,
+    this.ephemeralSession = false,
     this.plexToken,
     this.imageTag,
     this.isAdministrator = false,
@@ -53,18 +55,22 @@ class PrivateUser extends User {
     this.canManageLiveTv = false,
   });
 
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        'accessToken': accessToken,
-        'plexToken': ?plexToken,
-        'lastUsed': lastUsed.toIso8601String(),
-        'imageTag': imageTag,
-        'isAdministrator': isAdministrator,
-        'canDownload': canDownload,
-        'canManageSubtitles': canManageSubtitles,
-        'canManageCollections': canManageCollections,
-        'canManageLiveTv': canManageLiveTv,
-      };
+  Map<String, dynamic> toJson() {
+    if (ephemeralSession)
+      throw StateError('Managed profile credentials are session-only');
+    return {
+      'name': name,
+      'accessToken': accessToken,
+      'plexToken': ?plexToken,
+      'lastUsed': lastUsed.toIso8601String(),
+      'imageTag': imageTag,
+      'isAdministrator': isAdministrator,
+      'canDownload': canDownload,
+      'canManageSubtitles': canManageSubtitles,
+      'canManageCollections': canManageCollections,
+      'canManageLiveTv': canManageLiveTv,
+    };
+  }
 
   factory PrivateUser.fromJson(
     String id,
@@ -77,7 +83,8 @@ class PrivateUser extends User {
       serverId: serverId,
       accessToken: json['accessToken'] as String? ?? '',
       plexToken: json['plexToken'] as String?,
-      lastUsed: DateTime.tryParse(json['lastUsed'] as String? ?? '') ??
+      lastUsed:
+          DateTime.tryParse(json['lastUsed'] as String? ?? '') ??
           DateTime.now(),
       imageTag: json['imageTag'] as String?,
       isAdministrator: json['isAdministrator'] as bool? ?? false,
@@ -93,6 +100,7 @@ class PrivateUser extends User {
     String? name,
     String? serverId,
     String? accessToken,
+    bool? ephemeralSession,
     String? plexToken,
     DateTime? lastUsed,
     String? imageTag,
@@ -107,6 +115,7 @@ class PrivateUser extends User {
       name: name ?? this.name,
       serverId: serverId ?? this.serverId,
       accessToken: accessToken ?? this.accessToken,
+      ephemeralSession: ephemeralSession ?? this.ephemeralSession,
       plexToken: plexToken ?? this.plexToken,
       lastUsed: lastUsed ?? this.lastUsed,
       imageTag: imageTag ?? this.imageTag,

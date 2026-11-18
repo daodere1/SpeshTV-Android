@@ -1,3 +1,5 @@
+import '../spesh_profile_avatar.dart';
+
 import 'package:flutter/material.dart';
 import 'package:moonfin_design/moonfin_design.dart';
 import 'package:server_core/server_core.dart';
@@ -48,9 +50,8 @@ class BottomNavTabCell extends StatelessWidget {
   Widget build(BuildContext context) {
     // Labels share a narrow cell, so a large text setting shrinks them to fit
     // rather than pushing the icon out of the bar.
-    final textScaler = MediaQuery.textScalerOf(context).clamp(
-      maxScaleFactor: 1.15,
-    );
+    final textScaler = MediaQuery.textScalerOf(context)
+        .clamp(maxScaleFactor: 1.15);
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -122,6 +123,8 @@ class BottomNavAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profileAvatar = currentSpeshProfileAvatar(size);
+    if (profileAvatar != null) return profileAvatar;
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     final fallback = Container(
       color: fallbackColor.withValues(alpha: 0.18),

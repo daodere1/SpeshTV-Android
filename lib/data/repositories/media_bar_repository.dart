@@ -1,10 +1,11 @@
+import '../../ui/widgets/image_source.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:get_it/get_it.dart';
 import 'package:jellyfin_preference/jellyfin_preference.dart';
 import 'package:server_core/server_core.dart';
@@ -30,7 +31,7 @@ class MediaBarRepository {
     for (final item in items.take(2)) {
       for (final url in [item.backdropUrl, item.logoUrl]) {
         if (url != null)
-          unawaited(precacheImage(CachedNetworkImageProvider(url), context));
+          unawaited(precacheImage(offlineAwareImageProvider(url), context));
       }
     }
   }
@@ -73,7 +74,10 @@ class MediaBarRepository {
 
     final cacheKey =
         (const bool.fromEnvironment('SPESHTV_WEB') ||
-                const bool.fromEnvironment('SPESHMEDIA_CLIENT', defaultValue: true)) &&
+                const bool.fromEnvironment(
+                  'SPESHMEDIA_CLIENT',
+                  defaultValue: true,
+                )) &&
             (_client.userId?.isNotEmpty ?? false)
         ? jsonEncode([
             _client.baseUrl,
@@ -152,25 +156,35 @@ class MediaBarRepository {
       } catch (_) {
         // The views endpoint can stall while building virtual/grouped views.
         // Root folders avoid that work and remain scoped to the signed-in user.
-        final folders = await _client.itemsApi.getItems(
-          includeItemTypes: const ['CollectionFolder'],
-          recursive: false,
-          fields: 'CollectionType',
-          limit: 100,
-          enableTotalRecordCount: false,
-        ).timeout(const Duration(seconds: 8));
+        final folders = await _client.itemsApi
+            .getItems(
+              includeItemTypes: const ['CollectionFolder'],
+              recursive: false,
+              fields: 'CollectionType',
+              limit: 100,
+              enableTotalRecordCount: false,
+            )
+            .timeout(const Duration(seconds: 8));
         if ((folders['Items'] as List? ?? []).isEmpty) {
           // Some Jellyfin roots expose virtual views only. Do not turn a
           // slow successful views response into an empty/disabled Spotlight.
-          viewsResponse = await viewsRequest.timeout(const Duration(seconds: 20));
+          viewsResponse = await viewsRequest.timeout(
+            const Duration(seconds: 20),
+          );
         } else {
-        final hidden = GetIt.instance.isRegistered<UserViewsRepository>()
-            ? await GetIt.instance<UserViewsRepository>().getMyMediaExcludes()
-                .timeout(const Duration(seconds: 4))
-            : const <String>{};
-        viewsResponse = {'Items': (folders['Items'] as List? ?? [])
-            .where((item) => item is Map && !hidden.contains(item['Id']?.toString()))
-            .toList()};
+          final hidden = GetIt.instance.isRegistered<UserViewsRepository>()
+              ? await GetIt.instance<UserViewsRepository>()
+                    .getMyMediaExcludes()
+                    .timeout(const Duration(seconds: 4))
+              : const <String>{};
+          viewsResponse = {
+            'Items': (folders['Items'] as List? ?? [])
+                .where(
+                  (item) =>
+                      item is Map && !hidden.contains(item['Id']?.toString()),
+                )
+                .toList(),
+          };
         }
       }
       final views = (viewsResponse['Items'] as List? ?? [])
@@ -213,8 +227,11 @@ class MediaBarRepository {
       // drop what the policy no longer allows before trusting them.
       if (libraryIds.isNotEmpty) {
         try {
-          allParentIds.addAll(await GetIt.instance<LibraryScopeService>()
-              .retainPermitted(libraryIds).timeout(const Duration(seconds: 4)));
+          allParentIds.addAll(
+            await GetIt.instance<LibraryScopeService>()
+                .retainPermitted(libraryIds)
+                .timeout(const Duration(seconds: 4)),
+          );
         } catch (_) {
           // A failed scope lookup is not proof that Spotlight was disabled.
         }
@@ -269,9 +286,12 @@ class MediaBarRepository {
               },
               concurrency: 6,
               onBatch: (batch) {
-                collectedIds.addAll(batch.where(_usableFor(excludedGenres))
-                    .map((item) => item['Id']?.toString() ?? '')
-                    .where((id) => id.isNotEmpty));
+                collectedIds.addAll(
+                  batch
+                      .where(_usableFor(excludedGenres))
+                      .map((item) => item['Id']?.toString() ?? '')
+                      .where((id) => id.isNotEmpty),
+                );
                 if (!earlySpotlightPublished && onCached != null) {
                   final preview = _selectItemsWithBackdrops(
                     batch,
@@ -374,10 +394,12 @@ class MediaBarRepository {
     Set<String> excludedGenres,
   ) {
     final seen = <String>{};
-    final withBackdrops = source.where(_usableFor(excludedGenres))
-        .where((item) => seen.add(item['Id']?.toString() ?? ''))
-        .toList()
-      ..shuffle();
+    final withBackdrops =
+        source
+            .where(_usableFor(excludedGenres))
+            .where((item) => seen.add(item['Id']?.toString() ?? ''))
+            .toList()
+          ..shuffle();
     return withBackdrops.take(maxItems).toList();
   }
 
@@ -714,10 +736,10 @@ class MediaBarRepository {
     Set<String> excludedGenres,
   ) async {
     if (external.isEmpty) return library;
-    final chosen = (<Object>[...library, ...external.take(maxItems)]
-          ..shuffle(_random))
-        .take(maxItems)
-        .toList();
+    final chosen = (<Object>[
+      ...library,
+      ...external.take(maxItems),
+    ]..shuffle(_random)).take(maxItems).toList();
     final slides = <String, MediaBarSlideItem>{};
     await mapBounded(
       chosen.whereType<ImdbExternalListItem>().toList(),
@@ -781,8 +803,7 @@ class MediaBarRepository {
       runtime: runTimeTicks != null
           ? Duration(microseconds: runTimeTicks ~/ 10)
           : null,
-      communityRating:
-          (details?['rating'] as num?)?.toDouble() ?? item.rating,
+      communityRating: (details?['rating'] as num?)?.toDouble() ?? item.rating,
       tmdbId: tmdbId,
       imdbId: imdbId,
       itemType: item.type == 'Series' ? 'Series' : 'Movie',

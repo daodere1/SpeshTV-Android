@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'car_artwork.dart';
+import '../data/services/spesh_session_privacy.dart';
 
 /// Snapshot of the most recent audio queue, persisted across process death.
 class LastPlaybackSession {
@@ -28,15 +29,15 @@ class LastPlaybackSession {
   });
 
   Map<String, dynamic> toJson() => {
-        'serverId': serverId,
-        'itemIds': itemIds,
-        'index': index,
-        'positionMs': positionMs,
-        'title': title,
-        'artist': artist,
-        'artUri': artUri,
-        'isAudiobook': isAudiobook,
-      };
+    'serverId': serverId,
+    'itemIds': itemIds,
+    'index': index,
+    'positionMs': positionMs,
+    'title': title,
+    'artist': artist,
+    'artUri': artUri,
+    'isAudiobook': isAudiobook,
+  };
 
   static LastPlaybackSession? fromJson(Map<String, dynamic> json) {
     final serverId = json['serverId'] as String?;
@@ -68,6 +69,7 @@ class LastPlaybackSessionStore {
 
   Future<void> save(LastPlaybackSession session) async {
     final prefs = await SharedPreferences.getInstance();
+    if (SpeshSessionPrivacy.managed) return;
     var toStore = session;
     if (session.itemIds.length > _maxQueueIds) {
       // Keep a window around the current index so resume stays meaningful.
@@ -90,6 +92,7 @@ class LastPlaybackSessionStore {
 
   Future<LastPlaybackSession?> load() async {
     final prefs = await SharedPreferences.getInstance();
+    if (SpeshSessionPrivacy.managed) return null;
     final raw = prefs.getString(_key);
     if (raw == null) return null;
     try {

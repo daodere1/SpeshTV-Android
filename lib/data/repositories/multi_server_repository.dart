@@ -89,6 +89,7 @@ class MultiServerRepository {
   }
 
   Future<List<ServerUserSession>> getLoggedInServers() async {
+    if (_sessionRepo.isSpeshProfileActive) return _liveProfileSession();
     if (_cachedSessions != null && DateTime.now().isBefore(_cacheExpiry)) {
       return _cachedSessions!;
     }
@@ -132,6 +133,8 @@ class MultiServerRepository {
           continue;
         }
 
+        // An account lookup may have awaited secure storage across a profile switch.
+        if (_sessionRepo.isSpeshProfileActive) return _liveProfileSession();
         final client = _clientFactory.getClient(
           serverId: server.id,
           serverType: server.serverType,
@@ -151,6 +154,25 @@ class MultiServerRepository {
     _cachedSessions = sessions;
     _cacheExpiry = DateTime.now().add(_sessionCacheDuration);
     return sessions;
+  }
+
+  List<ServerUserSession> _liveProfileSession() {
+    final serverId = _sessionRepo.activeServerId;
+    final userId = _sessionRepo.activeUserId;
+    final client = serverId == null
+        ? null
+        : _clientFactory.getClientIfExists(serverId);
+    final server = _authStore
+        .getServers()
+        .where((s) => s.id == serverId)
+        .firstOrNull;
+    // Fail closed: a temporary user is deliberately absent from saved accounts.
+    if (server == null ||
+        client == null ||
+        userId == null ||
+        client.userId != userId)
+      return [];
+    return [ServerUserSession(server: server, userId: userId, client: client)];
   }
 
   // Concurrent callers share one in-flight aggregation instead of each
@@ -203,20 +225,16 @@ class MultiServerRepository {
     final sessions = await getLoggedInServers();
     final perServer = (limit * 3).clamp(1, 100);
 
-    final results = await _gatherPerServer(
-      sessions,
-      (session) async {
-        final response = await session.client.itemsApi.getResumeItems(
-          mediaTypes: 'Video',
-          limit: perServer,
-          fields: _fields,
-          enableImageTypes: _imageTypes,
-          imageTypeLimit: _imageTypeLimit,
-        );
-        return _parseItems(response, session.server.id);
-      },
-      label: 'resume',
-    );
+    final results = await _gatherPerServer(sessions, (session) async {
+      final response = await session.client.itemsApi.getResumeItems(
+        mediaTypes: 'Video',
+        limit: perServer,
+        fields: _fields,
+        enableImageTypes: _imageTypes,
+        imageTypeLimit: _imageTypeLimit,
+      );
+      return _parseItems(response, session.server.id);
+    }, label: 'resume');
 
     final all = results.expand((e) => e).toList()..sort(_compareByLastPlayed);
 
@@ -261,28 +279,24 @@ class MultiServerRepository {
     final sessions = await getLoggedInServers();
     final perServer = (limit * 3).clamp(1, 100);
 
-    final results = await _gatherPerServer(
-      sessions,
-      (session) async {
-        final request = session.client.itemsApi.getNextUp(
-          limit: perServer,
-          fields: _fields,
-          enableImageTypes: _imageTypes,
-          imageTypeLimit: _imageTypeLimit,
-          enableResumable: false,
-          nextUpDateCutoff: nextUpDateCutoff,
-        );
-        final recentlyPlayed = fetchSeriesLastPlayed(session.client);
-        final response = await request;
-        final parsed = _parseItems(response, session.server.id);
-        return await _enrichNextUpItemsWithSeriesLastPlayed(
-          parsed,
-          session.client,
-          recentlyPlayed,
-        );
-      },
-      label: 'next up',
-    );
+    final results = await _gatherPerServer(sessions, (session) async {
+      final request = session.client.itemsApi.getNextUp(
+        limit: perServer,
+        fields: _fields,
+        enableImageTypes: _imageTypes,
+        imageTypeLimit: _imageTypeLimit,
+        enableResumable: false,
+        nextUpDateCutoff: nextUpDateCutoff,
+      );
+      final recentlyPlayed = fetchSeriesLastPlayed(session.client);
+      final response = await request;
+      final parsed = _parseItems(response, session.server.id);
+      return await _enrichNextUpItemsWithSeriesLastPlayed(
+        parsed,
+        session.client,
+        recentlyPlayed,
+      );
+    }, label: 'next up');
 
     final all = results.expand((e) => e).toList()..sort(_compareByLastPlayed);
 
@@ -317,9 +331,10 @@ class MultiServerRepository {
             enableImageTypes: _imageTypes,
             imageTypeLimit: _imageTypeLimit,
           );
-          final playlistsOnly = _parseItems(response, session.server.id)
-              .where((item) => item.type == 'Playlist')
-              .toList();
+          final playlistsOnly = _parseItems(
+            response,
+            session.server.id,
+          ).where((item) => item.type == 'Playlist').toList();
           final items = await filterBrowsablePlaylists(
             session.client,
             playlistsOnly,
@@ -406,7 +421,6 @@ class MultiServerRepository {
       mediaType: 'Audio',
     );
   }
-
 
   Future<HomeRow> getAggregatedFavorites({
     required String rowId,
@@ -764,7 +778,9 @@ class MultiServerRepository {
                   prefs?.get(UserPreferences.collectionsRowSortBy).apiValue ??
                   _defaultSortBy;
               final sortOrder =
-                  prefs?.get(UserPreferences.collectionsRowSortOrder).apiValue ??
+                  prefs
+                      ?.get(UserPreferences.collectionsRowSortOrder)
+                      .apiValue ??
                   _defaultSortOrder;
               _rowOffsets[cacheKey] = startIndex + _defaultLimit;
 
@@ -897,8 +913,10 @@ class MultiServerRepository {
       if (row.rowType == HomeRowType.playlists ||
           row.rowType == HomeRowType.audioPlaylists) {
         final sortBy = row.rowType == HomeRowType.audioPlaylists
-            ? (prefs?.get(UserPreferences.audioRowsSortBy).apiValue ?? _defaultSortBy)
-            : (prefs?.get(UserPreferences.playlistsRowSortBy).apiValue ?? _defaultSortBy);
+            ? (prefs?.get(UserPreferences.audioRowsSortBy).apiValue ??
+                  _defaultSortBy)
+            : (prefs?.get(UserPreferences.playlistsRowSortBy).apiValue ??
+                  _defaultSortBy);
         final sortOrder = row.rowType == HomeRowType.audioPlaylists
             ? (prefs?.get(UserPreferences.audioRowsSortOrder).apiValue ??
                   _defaultSortOrder)
@@ -907,9 +925,8 @@ class MultiServerRepository {
         if (sortBy == 'SortName') {
           final ascending = sortOrder == SortDirection.ascending.apiValue;
           uniqueCombined.sort(
-            (a, b) => ascending
-                ? a.name.compareTo(b.name)
-                : b.name.compareTo(a.name),
+            (a, b) =>
+                ascending ? a.name.compareTo(b.name) : b.name.compareTo(a.name),
           );
         } else {
           _sortAggregatedItems(
@@ -942,8 +959,7 @@ class MultiServerRepository {
           HomeRowType.genres =>
             prefs?.get(UserPreferences.genresRowSortBy).apiValue ??
                 _defaultSortBy,
-          HomeRowType.audioArtists ||
-          HomeRowType.audioAlbums =>
+          HomeRowType.audioArtists || HomeRowType.audioAlbums =>
             prefs?.get(UserPreferences.audioRowsSortBy).apiValue ??
                 _defaultSortBy,
           _ => _defaultSortBy,
@@ -958,8 +974,7 @@ class MultiServerRepository {
           HomeRowType.genres =>
             prefs?.get(UserPreferences.genresRowSortOrder).apiValue ??
                 _defaultSortOrder,
-          HomeRowType.audioArtists ||
-          HomeRowType.audioAlbums =>
+          HomeRowType.audioArtists || HomeRowType.audioAlbums =>
             prefs?.get(UserPreferences.audioRowsSortOrder).apiValue ??
                 _defaultSortOrder,
           _ => _defaultSortOrder,
@@ -1241,13 +1256,14 @@ class MultiServerRepository {
     var failures = 0;
     final results = await Future.wait(
       sessions.map(
-        (session) => _withTimeout(
-          () => task(session),
-          label: '$label from ${session.server.name}',
-        ).catchError((_) {
-          failures++;
-          return <AggregatedItem>[];
-        }),
+        (session) =>
+            _withTimeout(
+              () => task(session),
+              label: '$label from ${session.server.name}',
+            ).catchError((_) {
+              failures++;
+              return <AggregatedItem>[];
+            }),
       ),
     );
     if (sessions.isNotEmpty && failures == sessions.length) {
@@ -1267,8 +1283,9 @@ class MultiServerRepository {
     return _gatherPerServer(
       sessions,
       (session) async => [
-          for (final item in await search(SearchRepository(
-            session.client, serverId: session.server.id)))
+        for (final item in await search(
+          SearchRepository(session.client, serverId: session.server.id),
+        ))
           AggregatedItem(
             id: item.id,
             serverId: session.server.id,

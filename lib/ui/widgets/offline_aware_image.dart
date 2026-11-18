@@ -1,3 +1,5 @@
+import '../../data/services/spesh_session_privacy.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -148,7 +150,7 @@ class OfflineAwareImage extends StatelessWidget {
       headers: headers,
       cacheManager: cacheManager,
     );
-    if (local) {
+    if (local || SpeshSessionPrivacy.containsToken(imageUrl)) {
       if (imageBuilder != null) return imageBuilder!(context, bounded);
       return Image(
         image: bounded,

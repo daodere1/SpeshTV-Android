@@ -79,6 +79,7 @@ void registerServerModule() {
 void setActiveServerClient(
   MediaServerClient client, {
   bool background = false,
+  bool ephemeralSession = false,
 }) {
   // The raw client keeps serving downloads, playback, and sockets, while the
   // registered singleton is a wrapper that answers browse and read calls from
@@ -86,14 +87,16 @@ void setActiveServerClient(
   final rawClient = client is ConnectivityAwareMediaServerClient
       ? client.onlineClient
       : client;
-  final wrapped = ConnectivityAwareMediaServerClient(
-    rawClient,
-    useOffline: shouldUseOfflineCatalog,
-    catalog: _getIt<OfflineCatalog>(),
-    storagePath: _getIt<StoragePathService>(),
-    pendingRatings: _getIt<PendingRatingStore>(),
-    offlineRepo: _getIt<OfflineRepository>(),
-  );
+  final MediaServerClient wrapped = ephemeralSession
+      ? rawClient
+      : ConnectivityAwareMediaServerClient(
+          rawClient,
+          useOffline: shouldUseOfflineCatalog,
+          catalog: _getIt<OfflineCatalog>(),
+          storagePath: _getIt<StoragePathService>(),
+          pendingRatings: _getIt<PendingRatingStore>(),
+          offlineRepo: _getIt<OfflineRepository>(),
+        );
 
   if (_getIt.isRegistered<MediaServerClient>()) {
     _getIt.unregister<MediaServerClient>();
@@ -124,7 +127,9 @@ void setActiveServerClient(
     );
   }
 
-  if (AutoDownloadService.isSupportedPlatform) {
+  if (ephemeralSession) {
+    _tearDownAutoDownload(disable: true);
+  } else if (AutoDownloadService.isSupportedPlatform) {
     _replaceAutoDownloadService(
       rawClient,
       downloadService,
@@ -141,7 +146,9 @@ void setActiveServerClient(
   // Absent on the background isolates, which never sync progress. On the app
   // engine a new client is the moment to push progress recorded offline, as
   // no reachability edge follows a sign-in or a restore on a live network.
-  if (!background && _getIt.isRegistered<ConnectivityService>()) {
+  if (!ephemeralSession &&
+      !background &&
+      _getIt.isRegistered<ConnectivityService>()) {
     unawaited(
       _getIt<ConnectivityService>().onServerClientReady(
         _getIt<MediaServerClientFactory>().serverIdOf(rawClient),

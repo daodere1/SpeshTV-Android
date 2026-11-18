@@ -1,3 +1,5 @@
+import 'spesh_session_privacy.dart';
+
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -60,10 +62,14 @@ class TvChannelsService {
   }
 
   Future<void> publish() async {
+    if (SpeshSessionPrivacy.managed) return;
     if (!_enabled) return;
     try {
       final client = GetIt.instance<MediaServerClient>();
-      final channels = await buildChannels(client, serverId: _serverIdFor(client));
+      final channels = await buildChannels(
+        client,
+        serverId: _serverIdFor(client),
+      );
       final signature = _signatureFor(channels);
       if (signature == _lastPublishedSignature) return;
 
@@ -72,6 +78,7 @@ class TvChannelsService {
         _lastPublishedSignature = signature;
         return;
       }
+      if (SpeshSessionPrivacy.managed) return;
       await CarArtwork.instance.persistHosts();
       await _channel.invokeMethod('publishChannels', {'channels': channels});
       _lastPublishedSignature = signature;
@@ -198,7 +205,10 @@ class TvChannelsService {
           .loadLatestByType(serverId, const ['Movie'], limit: _maxItems)
           .catchError((_) => <AggregatedItem>[]),
       dataSource
-          .loadLatestByType(serverId, const ['Series', 'Episode'], limit: _maxItems)
+          .loadLatestByType(serverId, const [
+            'Series',
+            'Episode',
+          ], limit: _maxItems)
           .catchError((_) => <AggregatedItem>[]),
       _loadRecentlyReleased(dataSource, serverId, _ReleaseCollection.movies),
       _loadRecentlyReleased(dataSource, serverId, _ReleaseCollection.tvShows),

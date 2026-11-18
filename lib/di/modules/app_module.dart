@@ -70,32 +70,32 @@ import '../../ui/screens/setup/setup_wizard_gate.dart';
 
 final _getIt = GetIt.instance;
 
-void resetUserScopedSingletons() {
-  void unregister<T extends Object>() {
+Future<void> resetUserScopedSingletons() async {
+  Future<void> unregister<T extends Object>() async {
     if (_getIt.isRegistered<T>()) {
-      _getIt.unregister<T>();
+      await _getIt.unregister<T>();
     }
   }
 
-  unregister<SeerrDiscoverViewModel>();
-  unregister<SeerrRepository>();
-  unregister<HomeViewModel>();
-  unregister<MediaBarViewModel>();
-  unregister<MultiServerRepository>();
-  unregister<ThemeMusicService>();
-  unregister<MediaBarRepository>();
-  unregister<TmdbRepository>();
-  unregister<MdbListRepository>();
-  unregister<AnimeMarkerRepository>();
-  unregister<RowDataSource>();
+  await unregister<SeerrDiscoverViewModel>();
+  await unregister<SeerrRepository>();
+  await unregister<HomeViewModel>();
+  await unregister<MediaBarViewModel>();
+  await unregister<MultiServerRepository>();
+  await unregister<ThemeMusicService>();
+  await unregister<MediaBarRepository>();
+  await unregister<TmdbRepository>();
+  await unregister<MdbListRepository>();
+  await unregister<AnimeMarkerRepository>();
+  await unregister<RowDataSource>();
   RowDataSource.clearRecommendationCache();
-  unregister<ItemMutationRepository>();
-  unregister<SearchRepository>();
-  unregister<UserViewsRepository>();
-  unregister<LibraryScopeService>();
-  unregister<BlockedContentGate>();
-  unregister<GameLibraryRegistry>();
-  unregister<UpcomingEpisodeService>();
+  await unregister<ItemMutationRepository>();
+  await unregister<SearchRepository>();
+  await unregister<UserViewsRepository>();
+  await unregister<LibraryScopeService>();
+  await unregister<BlockedContentGate>();
+  await unregister<GameLibraryRegistry>();
+  await unregister<UpcomingEpisodeService>();
   // Watched state is per user, so the next account must not inherit it.
   userDataSync.reset();
 
@@ -162,26 +162,31 @@ void registerAppModule() {
     ),
     dispose: (controller) => controller.dispose(),
   );
-  _getIt.registerLazySingleton(() {
-    final users = _getIt<UserRepository>();
-    final service = AccessScheduleService(
-      loadSchedules: _loadAccessSchedules,
-      onBlocked: _stopPlaybackForAccessSchedule,
-      serverRefuses: _serverRefusesUser,
-    );
-    // An administrator has no schedule to enforce.
-    String? watched(User? user) =>
-        user == null || user.isAdministrator ? null : user.id;
-    service.setUser(watched(users.currentUser));
-    _accessScheduleUserSubscription = users.currentUserStream.listen(
-      (user) => service.setUser(watched(user)),
-    );
-    return service;
-  }, dispose: (service) {
-    unawaited(_accessScheduleUserSubscription?.cancel());
-    service.dispose();
-  });
-  _getIt.registerLazySingleton(() => SetupWizardGate(_getIt<UserPreferences>()));
+  _getIt.registerLazySingleton(
+    () {
+      final users = _getIt<UserRepository>();
+      final service = AccessScheduleService(
+        loadSchedules: _loadAccessSchedules,
+        onBlocked: _stopPlaybackForAccessSchedule,
+        serverRefuses: _serverRefusesUser,
+      );
+      // An administrator has no schedule to enforce.
+      String? watched(User? user) =>
+          user == null || user.isAdministrator ? null : user.id;
+      service.setUser(watched(users.currentUser));
+      _accessScheduleUserSubscription = users.currentUserStream.listen(
+        (user) => service.setUser(watched(user)),
+      );
+      return service;
+    },
+    dispose: (service) {
+      unawaited(_accessScheduleUserSubscription?.cancel());
+      service.dispose();
+    },
+  );
+  _getIt.registerLazySingleton(
+    () => SetupWizardGate(_getIt<UserPreferences>()),
+  );
   _getIt.registerLazySingleton(() => const NativeCastChannel());
   _getIt.registerLazySingleton(() => const NativeDlnaChannel());
   _getIt.registerLazySingleton(() => const NativeAirPlayChannel());
@@ -245,7 +250,8 @@ void registerAppModule() {
     ),
   );
   _getIt.registerLazySingleton<SyncService>(
-    () => SyncService(_getIt<OfflineRepository>(), _getIt<PendingRatingStore>()),
+    () =>
+        SyncService(_getIt<OfflineRepository>(), _getIt<PendingRatingStore>()),
   );
   _getIt.registerLazySingleton(
     () => RemoveWatchedService(
@@ -340,6 +346,7 @@ void _registerUserScopedSingletons() {
       _getIt<UserPreferences>(),
       _getIt<MediaServerClient>(),
     ),
+    dispose: (model) => model.dispose(),
   );
   _getIt.registerLazySingleton(
     () => HomeViewModel(
@@ -349,6 +356,7 @@ void _registerUserScopedSingletons() {
       mediaBarViewModel: _getIt<MediaBarViewModel>(),
       multiServerRepo: _getIt<MultiServerRepository>(),
     ),
+    dispose: (model) => model.dispose(),
   );
   _getIt.registerLazySingleton(
     () => ThemeMusicService(
@@ -357,6 +365,7 @@ void _registerUserScopedSingletons() {
       _getIt<PlaybackManager>(),
       _getIt<PlaybackArbiter>(),
     ),
+    dispose: (service) => service.dispose(),
   );
   _getIt.registerLazySingletonAsync<SeerrRepository>(
     () async => SeerrRepository(
@@ -364,6 +373,7 @@ void _registerUserScopedSingletons() {
       _getIt<SessionRepository>(),
       _getIt<MediaServerClient>(),
     ),
+    dispose: (repository) => repository.close(),
   );
   _getIt.registerLazySingletonAsync<SeerrDiscoverViewModel>(
     () async => SeerrDiscoverViewModel(

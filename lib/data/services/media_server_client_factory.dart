@@ -50,10 +50,7 @@ class MediaServerClientFactory {
   }) {
     final normalizedBaseUrl = normalizeServerBaseUrl(baseUrl);
     return _clients.putIfAbsent(serverId, () {
-      return _createClient(
-        serverType: serverType,
-        baseUrl: normalizedBaseUrl,
-      );
+      return _createClient(serverType: serverType, baseUrl: normalizedBaseUrl);
     });
   }
 
@@ -130,16 +127,26 @@ class MediaServerClientFactory {
           ],
         );
       case ServerType.emby:
-        return EmbyMediaServerClient(
-          baseUrl: baseUrl,
-          deviceInfo: deviceInfo,
-        );
+        return EmbyMediaServerClient(baseUrl: baseUrl, deviceInfo: deviceInfo);
       case ServerType.plex:
-        return PlexMediaServerClient(
-          baseUrl: baseUrl,
-          deviceInfo: deviceInfo,
-        );
+        return PlexMediaServerClient(baseUrl: baseUrl, deviceInfo: deviceInfo);
     }
+  }
+
+  MediaServerClient createProfileClient({
+    required ServerType serverType,
+    required String baseUrl,
+  }) => _createRawClient(
+    serverType: serverType,
+    baseUrl: normalizeServerBaseUrl(baseUrl),
+  );
+  MediaServerClient? replaceProfileClient(
+    String serverId,
+    MediaServerClient client,
+  ) {
+    final previous = _clients.remove(serverId);
+    _clients[serverId] = client;
+    return previous;
   }
 
   void removeClient(String serverId) {

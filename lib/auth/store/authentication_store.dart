@@ -87,7 +87,9 @@ class AuthenticationStore {
     final serverData = Map<String, dynamic>.from(raw as Map);
 
     final usersRaw = serverData['users'];
-    final users = usersRaw is Map ? Map<String, dynamic>.from(usersRaw) : <String, dynamic>{};
+    final users = usersRaw is Map
+        ? Map<String, dynamic>.from(usersRaw)
+        : <String, dynamic>{};
     return users.entries.map((entry) {
       return PrivateUser.fromJson(
         entry.key,
@@ -103,7 +105,9 @@ class AuthenticationStore {
     final serverData = Map<String, dynamic>.from(raw as Map);
 
     final usersRaw = serverData['users'];
-    final users = usersRaw is Map ? Map<String, dynamic>.from(usersRaw) : <String, dynamic>{};
+    final users = usersRaw is Map
+        ? Map<String, dynamic>.from(usersRaw)
+        : <String, dynamic>{};
     final userRaw = users[userId];
     if (userRaw == null) return null;
     final userData = Map<String, dynamic>.from(userRaw as Map);
@@ -112,11 +116,13 @@ class AuthenticationStore {
   }
 
   Future<void> putUser(PrivateUser user) async {
+    if (user.ephemeralSession || user.name.startsWith("speshtv-profile-"))
+      throw StateError("Managed profiles cannot be saved as accounts");
     final servers = Map<String, dynamic>.from(_servers);
-    final serverData =
-        Map<String, dynamic>.from(servers[user.serverId] as Map? ?? {});
-    final users =
-        Map<String, dynamic>.from(serverData['users'] as Map? ?? {});
+    final serverData = Map<String, dynamic>.from(
+      servers[user.serverId] as Map? ?? {},
+    );
+    final users = Map<String, dynamic>.from(serverData['users'] as Map? ?? {});
 
     users[user.id] = user.toJson();
     serverData['users'] = users;
@@ -131,8 +137,9 @@ class AuthenticationStore {
     if (serverData == null) return;
 
     final mutableServerData = Map<String, dynamic>.from(serverData);
-    final users =
-        Map<String, dynamic>.from(mutableServerData['users'] as Map? ?? {});
+    final users = Map<String, dynamic>.from(
+      mutableServerData['users'] as Map? ?? {},
+    );
     users.remove(userId);
     mutableServerData['users'] = users;
     servers[serverId] = mutableServerData;

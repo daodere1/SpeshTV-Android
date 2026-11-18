@@ -7,7 +7,15 @@ const speshCurrentReleaseNotes = <String>[
   'Studios: full-color service artwork, clapperboard shortcut, and reliable navigation after closing the chooser.',
   'Episode browsing: current/resumable episode positioning, anime badges, touch long-press and held-OK actions.',
 ];
+const speshProfileReleaseNotes = <String>[
+  'Choose who is watching at launch, or switch profiles from the account menu. Up to three named profiles with original avatars.',
+  'Managed profiles keep progress and favorites separate while preserving your original account and its history.',
+  'Managed profiles use online playback; saved offline media and automatic downloads remain with the original account.',
+
+  ...speshCurrentReleaseNotes,
+];
 List<String> speshReleaseNotesForBuild(String build) => switch (build) {
+  '30000208' || '2000075' => speshProfileReleaseNotes,
   '30000207' || '2000074' => speshCurrentReleaseNotes,
   '30000206' || '2000073' => const [
     'Calendar rereads the shared server schedule about every minute while visible, with readable TV and movie filters.',

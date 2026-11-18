@@ -1,4 +1,7 @@
 import 'dart:io';
+
+import '../../data/services/spesh_session_privacy.dart';
+
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -34,6 +37,13 @@ ImageProvider offlineAwareImageProvider(
       return ResizeImage.resizeIfNeeded(maxWidth, maxHeight, file);
     }
     return file;
+  }
+  if (SpeshSessionPrivacy.containsToken(url)) {
+    return ResizeImage.resizeIfNeeded(
+      maxWidth,
+      maxHeight,
+      NetworkImage(url, headers: headers),
+    );
   }
   // maxWidth/maxHeight bound the decode, matching the local-file branch above.
   // They are deliberately not passed to the provider: that would make the cache

@@ -1,6 +1,7 @@
+import 'image_source.dart';
+
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -651,9 +652,7 @@ class _VideoMiniPlayerBarState extends State<_VideoMiniPlayerBar> {
                           unawaited(_manager.seekTo(position)),
                       tileAt: _trickplayTileAt,
                     ),
-                    wide
-                        ? _buildWide(l10n, info)
-                        : _buildCompact(l10n, info),
+                    wide ? _buildWide(l10n, info) : _buildCompact(l10n, info),
                   ],
                 );
               },
@@ -1446,7 +1445,7 @@ class _MiniProgressBarState extends State<_MiniProgressBar> {
     );
 
     Widget image(TrickplayTile t) => TrickplayTileImage(
-      sheet: CachedNetworkImageProvider(
+      sheet: offlineAwareImageProvider(
         t.url,
         headers: t.headers.isEmpty ? null : t.headers,
       ),
