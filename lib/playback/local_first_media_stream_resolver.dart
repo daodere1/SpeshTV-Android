@@ -1,3 +1,5 @@
+import '../data/services/spesh_session_privacy.dart';
+
 import 'package:playback_core/playback_core.dart';
 
 import '../data/offline/connectivity_aware_media_server_client.dart';
@@ -43,7 +45,9 @@ class LocalFirstMediaStreamResolver extends MediaStreamResolver {
   }) async {
     // Only substitute the local copy on direct-play-eligible requests.
     // Force-transcode requests disable direct play and should keep streaming.
-    if (enableDirectPlay) {
+    // The downloads catalogue and its deferred progress belong to the saved
+    // account. Session-only profiles must always resolve through their server.
+    if (enableDirectPlay && !SpeshSessionPrivacy.managed) {
       // A play from server pick skips the download, unless the server is out
       // of reach and the download is the only copy left.
       final skipLocal =

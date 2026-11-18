@@ -1,3 +1,5 @@
+import 'spesh_session_privacy.dart';
+
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -89,6 +91,7 @@ class RemoveWatchedService {
   /// and returns how many went. Asked for while a pass runs, it waits for
   /// that one; asks made meanwhile share the waiting pass.
   Future<int> run(MediaServerClient client, {required String serverId}) {
+    if (SpeshSessionPrivacy.managed) return Future.value(0);
     final running = _pass;
     if (running == null) return _track(_runPass(client, serverId));
     if (_passQueued) return running;
@@ -125,6 +128,7 @@ class RemoveWatchedService {
   /// A pass for the signed-in server, when there is one and the reconnect
   /// sync is not about to run its own.
   Future<int> runForSignedInServer() async {
+    if (SpeshSessionPrivacy.managed) return 0;
     final server = _signedInServer?.call();
     if (server == null || !isEnabled || (_syncInFlight?.call() ?? false)) {
       return 0;
@@ -202,6 +206,7 @@ class RemoveWatchedService {
   /// download. Debounced so a quick stop and start (the next episode, a
   /// re-resolve) fetches once, but every item stopped meanwhile is fetched.
   void onItemStopped(String itemId) {
+    if (SpeshSessionPrivacy.managed) return;
     if (!isEnabled) return;
     _stoppedIds.add(itemId);
     _stopTimer?.cancel();
@@ -212,6 +217,10 @@ class RemoveWatchedService {
   /// a pass. One request per item, rather than the reconnect sync's refresh
   /// of every download.
   Future<void> _afterStops() async {
+    if (SpeshSessionPrivacy.managed) {
+      _stoppedIds.clear();
+      return;
+    }
     final itemIds = _stoppedIds.toList();
     _stoppedIds.clear();
     final server = _signedInServer?.call();

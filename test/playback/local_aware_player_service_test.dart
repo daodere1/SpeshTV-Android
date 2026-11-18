@@ -78,22 +78,16 @@ void main() {
   });
 
   test('a downloaded stop offline still tells the listener', () async {
-    await service(reachable: false).onPlaybackStop(
-      item,
-      _resolution(local: true),
-      Duration.zero,
-    );
+    await service(reachable: false)
+        .onPlaybackStop(item, _resolution(local: true), Duration.zero);
 
     expect(events, ['recorded', 'stopped episode-1']);
   });
 
   test('a failed streamed report still tells the listener', () async {
     await expectLater(
-      service(fail: true).onPlaybackStop(
-        item,
-        _resolution(local: false),
-        Duration.zero,
-      ),
+      service(fail: true)
+          .onPlaybackStop(item, _resolution(local: false), Duration.zero),
       throwsStateError,
     );
 

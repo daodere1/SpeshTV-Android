@@ -1,3 +1,5 @@
+import 'spesh_session_privacy.dart';
+
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -15,11 +17,13 @@ import 'remove_watched_service.dart';
 
 class ConnectivityService extends ChangeNotifier {
   final Connectivity _connectivity;
-  final Dio _pingDio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 5),
-    receiveTimeout: const Duration(seconds: 5),
-    followRedirects: false,
-  ));
+  final Dio _pingDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 5),
+      followRedirects: false,
+    ),
+  );
   StreamSubscription<List<ConnectivityResult>>? _subscription;
   Timer? _recheckDebounce;
 
@@ -60,8 +64,7 @@ class ConnectivityService extends ChangeNotifier {
 
   static bool _cellularOnly(List<ConnectivityResult> results) {
     final live = results.where((r) => r != ConnectivityResult.none).toList();
-    return live.isNotEmpty &&
-        live.every((r) => r == ConnectivityResult.mobile);
+    return live.isNotEmpty && live.every((r) => r == ConnectivityResult.mobile);
   }
 
   /// Whether the initial connectivity check has completed.
@@ -97,8 +100,9 @@ class ConnectivityService extends ChangeNotifier {
 
   void initialize() {
     if (!PlatformDetection.isAppleTV) {
-      _subscription =
-          _connectivity.onConnectivityChanged.listen(_onConnectivityChanged);
+      _subscription = _connectivity.onConnectivityChanged.listen(
+        _onConnectivityChanged,
+      );
     }
     _checkInitialState();
   }
@@ -190,6 +194,7 @@ class ConnectivityService extends ChangeNotifier {
   }
 
   void _triggerSync() {
+    if (SpeshSessionPrivacy.managed) return;
     _nudgeSocket();
     // Every network flip lands here, and the full progress and metadata sync
     // keeps the radio and CPU busy on a device nobody is looking at. Defer it
@@ -256,7 +261,8 @@ class ConnectivityService extends ChangeNotifier {
     // A null state means no lifecycle event has arrived yet. On desktop that
     // can last the whole run so it counts as foreground, while on Android it
     // marks a headless engine and counts as background.
-    final backgrounded = lifecycle == AppLifecycleState.paused ||
+    final backgrounded =
+        lifecycle == AppLifecycleState.paused ||
         lifecycle == AppLifecycleState.hidden ||
         lifecycle == AppLifecycleState.detached ||
         (lifecycle == null && PlatformDetection.isAndroid);

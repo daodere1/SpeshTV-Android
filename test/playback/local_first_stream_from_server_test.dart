@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:moonfin/data/services/spesh_session_privacy.dart';
 import 'package:moonfin/playback/local_first_media_stream_resolver.dart';
 import 'package:moonfin/playback/offline_stream_resolver.dart';
 import 'package:playback_core/playback_core.dart';
@@ -35,6 +36,7 @@ class _Downloads extends Fake implements OfflineStreamResolver {
 }
 
 void main() {
+  tearDown(() => SpeshSessionPrivacy.activate(null));
   const movie = {'Id': 'movie'};
 
   Future<StreamResolutionResult> resolveWith({required bool fromServer}) =>
@@ -55,4 +57,15 @@ void main() {
     expect(result.isLocalMedia, isFalse);
     expect(result.streamUrl, 'https://server/movie');
   });
+  test(
+    'managed profiles bypass saved-account downloads and deferred progress',
+    () async {
+      SpeshSessionPrivacy.activate('child-token');
+      final result = await resolveWith(fromServer: false);
+      expect(result.isLocalMedia, isFalse);
+      expect(result.streamUrl, 'https://server/movie');
+      SpeshSessionPrivacy.activate(null);
+      expect((await resolveWith(fromServer: false)).isLocalMedia, isTrue);
+    },
+  );
 }

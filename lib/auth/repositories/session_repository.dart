@@ -246,7 +246,6 @@ class SessionRepository {
         selectedSpeshProfileAvatar = profile.avatar;
         _profileChosen = true;
         _profileCompatibilityMode = false;
-        SpeshSessionPrivacy.activate(managed ? token : null);
         await _installSpeshIdentity(candidate, user, managed: managed);
         oldClient.dispose();
         candidate = null;
@@ -256,11 +255,6 @@ class SessionRepository {
         selectedSpeshProfileAvatar = oldProfile.$3;
         _profileChosen = oldProfile.$4;
         _profileCompatibilityMode = oldProfile.$5;
-        SpeshSessionPrivacy.activate(
-          oldUser is PrivateUser && oldUser.ephemeralSession
-              ? oldUser.accessToken
-              : null,
-        );
         if (oldUser is PrivateUser)
           await _installSpeshIdentity(
             oldClient,
@@ -298,6 +292,10 @@ class SessionRepository {
     // Set identity before any newly registered repository can consult it.
     _activeUserId = user.id;
     _clientFactory.replaceProfileClient(user.serverId, client);
+    // Publish the privacy mode atomically with the actual client identity.
+    // In particular, returning to main must not allow a reconnect to replay
+    // owner offline progress through the child client during teardown awaits.
+    SpeshSessionPrivacy.activate(managed ? client.accessToken : null);
     setActiveServerClient(client, ephemeralSession: managed);
     _userRepository.setCurrentUser(user);
     await resetUserScopedSingletons();
@@ -326,7 +324,6 @@ class SessionRepository {
     _profileChosen = false;
     _profileCompatibilityMode = false;
     selectedSpeshProfileId = null;
-    SpeshSessionPrivacy.activate(null);
     await _installSpeshIdentity(client, owner, managed: false);
     old?.dispose();
   }

@@ -1,3 +1,5 @@
+import 'spesh_session_privacy.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -40,7 +42,8 @@ class SyncService extends ChangeNotifier {
     MediaServerClient client, {
     required String? serverId,
   }) async {
-    if (serverId == null) return const SyncResult(synced: 0, failed: 0);
+    if (SpeshSessionPrivacy.managed || serverId == null)
+      return const SyncResult(synced: 0, failed: 0);
 
     var synced = 0, failed = 0;
     for (final entry in _pendingRatings.all) {
@@ -88,7 +91,8 @@ class SyncService extends ChangeNotifier {
     MediaServerClient client, {
     required String? serverId,
   }) async {
-    if (serverId == null) return const SyncResult(synced: 0, failed: 0);
+    if (SpeshSessionPrivacy.managed || serverId == null)
+      return const SyncResult(synced: 0, failed: 0);
     if (_state == SyncState.syncing) {
       return const SyncResult(synced: 0, failed: 0);
     }
@@ -232,7 +236,7 @@ class SyncService extends ChangeNotifier {
     MediaServerClient client, {
     required String? serverId,
   }) async {
-    if (serverId == null) return;
+    if (SpeshSessionPrivacy.managed || serverId == null) return;
     final items = await _offlineRepo.getItems(onlyCompleted: true);
     for (final item in items.where((i) => _isFromServer(i, client, serverId))) {
       try {
@@ -246,12 +250,15 @@ class SyncService extends ChangeNotifier {
         int? serverTicks;
         if (userData != null) {
           final serverPlayed = userData['Played'] as bool? ?? false;
-          serverTicks = serverPlayed ? 0 : (userData['PlaybackPositionTicks'] as int? ?? 0);
+          serverTicks = serverPlayed
+              ? 0
+              : (userData['PlaybackPositionTicks'] as int? ?? 0);
         }
 
         final localItem = await _offlineRepo.getItem(item.itemId);
         if (localItem == null) continue;
-        final shouldUpdateTicks = localItem.progressSynced && serverTicks != null;
+        final shouldUpdateTicks =
+            localItem.progressSynced && serverTicks != null;
 
         await _offlineRepo.upsertItem(
           DownloadedItemsCompanion(
@@ -279,7 +286,9 @@ class SyncService extends ChangeNotifier {
             indexNumber: Value(localItem.indexNumber),
             parentIndexNumber: Value(localItem.parentIndexNumber),
             progressSynced: Value(localItem.progressSynced),
-            playbackPositionTicks: shouldUpdateTicks ? Value(serverTicks) : Value(localItem.playbackPositionTicks),
+            playbackPositionTicks: shouldUpdateTicks
+                ? Value(serverTicks)
+                : Value(localItem.playbackPositionTicks),
           ),
         );
       } catch (e) {
