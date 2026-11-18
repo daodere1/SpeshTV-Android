@@ -1,5 +1,14 @@
 /// Session-only identities must not leave credentials in disk image/queue caches.
 class SpeshSessionPrivacy {
+  static bool isManagedIdentity({
+    required String? ownerId,
+    required String? activeUserId,
+  }) =>
+      ownerId != null &&
+      ownerId.isNotEmpty &&
+      activeUserId != null &&
+      activeUserId.isNotEmpty &&
+      activeUserId != ownerId;
   static bool managed = false;
   static final Set<String> _tokens = {};
   static void activate(String? token) {

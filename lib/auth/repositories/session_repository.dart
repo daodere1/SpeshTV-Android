@@ -134,11 +134,19 @@ class SessionRepository {
       _speshOwner != null &&
       _serverRepository.getServer(_activeServerId ?? '')?.serverType ==
           ServerType.jellyfin;
-  bool get needsSpeshProfile => supportsSpeshProfiles && !_profileChosen;
+  bool get needsSpeshProfile =>
+      supportsSpeshProfiles && (!_profileChosen || _profileSwitching);
   bool get isSpeshProfileActive =>
-      supportsSpeshProfiles && _profileChosen && !_profileCompatibilityMode;
+      supportsSpeshProfiles &&
+      (isManagedSpeshProfile || (_profileChosen && !_profileCompatibilityMode));
+  // Use the authenticated identity throughout teardown, even after the picker
+  // selection has been cleared. A child never becomes a saved-account miss.
   bool get isManagedSpeshProfile =>
-      isSpeshProfileActive && selectedSpeshProfileId != 'main';
+      supportsSpeshProfiles &&
+      SpeshSessionPrivacy.isManagedIdentity(
+        ownerId: speshOwnerId,
+        activeUserId: _activeUserId,
+      );
   String? get speshOwnerId => _speshOwner?.id;
   String get speshOwnerToken => _speshOwner?.accessToken ?? '';
   void rememberProfileDestination(String location) {

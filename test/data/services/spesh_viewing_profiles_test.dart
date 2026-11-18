@@ -28,6 +28,36 @@ const child = SpeshViewingProfile(
   isPrimary: false,
 );
 void main() {
+  test('managed identity remains isolated until the actual original account is restored', () {
+    expect(
+      SpeshSessionPrivacy.isManagedIdentity(
+        ownerId: 'owner',
+        activeUserId: 'child',
+      ),
+      isTrue,
+    );
+    expect(
+      SpeshSessionPrivacy.isManagedIdentity(
+        ownerId: 'owner',
+        activeUserId: 'owner',
+      ),
+      isFalse,
+    );
+    expect(
+      SpeshSessionPrivacy.isManagedIdentity(
+        ownerId: 'owner',
+        activeUserId: null,
+      ),
+      isFalse,
+    );
+    expect(
+      SpeshSessionPrivacy.isManagedIdentity(
+        ownerId: null,
+        activeUserId: 'child',
+      ),
+      isFalse,
+    );
+  });
   test('profile clients never mutate a retained owner request client', () {
     final factory = MediaServerClientFactory(deviceInfo: device);
     final owner = factory.getClient(
