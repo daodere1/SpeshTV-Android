@@ -14,7 +14,14 @@ const speshProfileReleaseNotes = <String>[
 
   ...speshCurrentReleaseNotes,
 ];
+const speshRokuParityReleaseNotes = <String>[
+  'Continue Watching and Continue Listening explicitly use the selected profile and request fresh server history.',
+  'Upcoming movie and TV rows use friendly labels throughout Home and row settings.',
+  'Profile editing, keyboard/cancel, guide, episode, calendar and playback regressions retained. Server resume thresholds are unchanged.',
+  ...speshProfileReleaseNotes,
+];
 List<String> speshReleaseNotesForBuild(String build) => switch (build) {
+  '30000209' || '2000076' => speshRokuParityReleaseNotes,
   '30000208' || '2000075' => speshProfileReleaseNotes,
   '30000207' || '2000074' => speshCurrentReleaseNotes,
   '30000206' || '2000073' => const [

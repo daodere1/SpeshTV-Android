@@ -2282,14 +2282,14 @@ class HomeViewModel extends ChangeNotifier {
       case HomeSectionType.radarrCalendar:
         return HomeRow(
           id: 'radarr_calendar',
-          title: 'Upcoming Movies (Radarr)',
+          title: 'Upcoming Movies',
           rowType: HomeRowType.pluginDynamic,
           isLoading: true,
         );
       case HomeSectionType.sonarrCalendar:
         return HomeRow(
           id: 'sonarr_calendar',
-          title: 'Upcoming TV Shows (Sonarr)',
+          title: 'Upcoming TV Shows',
           rowType: HomeRowType.pluginDynamic,
           isLoading: true,
         );
@@ -3813,7 +3813,7 @@ class HomeViewModel extends ChangeNotifier {
       return [
         HomeRow(
           id: 'radarr_calendar',
-          title: 'Upcoming Movies (Radarr)',
+          title: 'Upcoming Movies',
           rowType: HomeRowType.pluginDynamic,
           items: items,
         )
@@ -3867,7 +3867,7 @@ class HomeViewModel extends ChangeNotifier {
       return [
         HomeRow(
           id: 'sonarr_calendar',
-          title: 'Upcoming TV Shows (Sonarr)',
+          title: 'Upcoming TV Shows',
           rowType: HomeRowType.pluginDynamic,
           items: items,
         )

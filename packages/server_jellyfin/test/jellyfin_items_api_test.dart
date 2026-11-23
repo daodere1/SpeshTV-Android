@@ -16,11 +16,19 @@ class _FakeServer extends Interceptor {
 void main() {
   test('discovery IDs do not request Jellyfin theme media', () async {
     var requests = 0;
-    final dio = Dio()..interceptors.add(_FakeServer((options, handler) {
-      requests++;
-      handler.resolve(Response(requestOptions: options, data: <String, dynamic>{}));
-    }));
-    final result = await JellyfinItemsApi(dio, () => 'user-1').getThemeMedia('tmdb:movie:1236045');
+    final dio = Dio()
+      ..interceptors.add(
+        _FakeServer((options, handler) {
+          requests++;
+          handler.resolve(
+            Response(requestOptions: options, data: <String, dynamic>{}),
+          );
+        }),
+      );
+    final result = await JellyfinItemsApi(
+      dio,
+      () => 'user-1',
+    ).getThemeMedia('tmdb:movie:1236045');
     expect(requests, 0);
     expect(result['ThemeSongsResult']['Items'], isEmpty);
     expect(result['ThemeVideosResult']['Items'], isEmpty);
@@ -349,6 +357,52 @@ void main() {
 
       expect(request?.method, 'GET');
       expect(request?.path, '/Items/Latest');
+    },
+  );
+  for (final type in ['Video', 'Audio']) {
+    test(
+      '$type Resume is explicitly scoped and bypasses history caches',
+      () async {
+        final captured = <RequestOptions>[];
+        final dio = Dio(BaseOptions(headers: {'X-Test-Session': 'unchanged'}))
+          ..interceptors.add(
+            _FakeServer((o, h) {
+              captured.add(o);
+              h.resolve(
+                Response(
+                  requestOptions: o,
+                  data: <String, dynamic>{'Items': []},
+                ),
+              );
+            }),
+          );
+        var activeUser = 'profile-two';
+        final api = JellyfinItemsApi(dio, () => activeUser);
+        await api.getResumeItems(mediaTypes: type, startIndex: 15, limit: 12);
+        activeUser = 'original';
+        await api.getResumeItems(mediaTypes: type);
+        expect(captured.first.queryParameters['UserId'], 'profile-two');
+        expect(captured.last.queryParameters['UserId'], 'original');
+        expect(captured.first.queryParameters['StartIndex'], 15);
+        expect(captured.first.queryParameters['MediaTypes'], type);
+        for (final o in captured) {
+          expect(o.headers['Cache-Control'], contains('no-store'));
+          expect(o.headers['X-Test-Session'], 'unchanged');
+          expect(o.queryParameters.containsKey('MinResumePct'), false);
+        }
+        dio.close();
+      },
+    );
+  }
+  test(
+    'missing selected identity fails closed before querying history',
+    () async {
+      final dio = Dio();
+      await expectLater(
+        JellyfinItemsApi(dio, () => '').getResumeItems(),
+        throwsStateError,
+      );
+      dio.close();
     },
   );
 }

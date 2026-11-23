@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:moonfin/data/models/home_row.dart';
 import 'package:moonfin/l10n/app_localizations_en.dart';
 import 'package:moonfin/preference/preference_constants.dart';
 import 'package:moonfin/ui/util/home_row_title_localizer.dart';
@@ -38,5 +39,18 @@ void main() {
 
   test('the pinned wording covers every row type', () {
     expect(_englishTitles.keys.toSet(), SeerrRowType.values.toSet());
+  });
+  test('calendar home rows hide backend service names', () {
+    for (final entry in {
+      'radarr_calendar': 'Upcoming Movies',
+      'sonarr_calendar': 'Upcoming TV Shows',
+    }.entries) {
+      final row = HomeRow(
+        id: entry.key,
+        title: 'old backend label',
+        rowType: HomeRowType.pluginDynamic,
+      );
+      expect(localizeHomeRowTitle(row: row, l10n: _l10n), entry.value);
+    }
   });
 }

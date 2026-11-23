@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:custom_tv_text_field/custom_tv_text_field.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
@@ -119,4 +120,80 @@ void main() {
       verifyNever(() => session.selectSpeshProfile(profiles.first, api));
     },
   );
+  for (final tv in [false, true]) {
+    testWidgets(
+      'profile name/avatar Save and Cancel work with ${tv ? 'remote keyboard' : 'touch'}',
+      (tester) async {
+        PlatformDetection.setTvMode(tv);
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(1920, 1080);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        when(
+          () => api.save(
+            profile: profiles.first,
+            name: 'Changed',
+            avatar: 'gold',
+          ),
+        ).thenAnswer((_) async {});
+        await tester.pumpWidget(const MaterialApp(home: SpeshProfilesScreen()));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        await tester.tap(find.text('Edit profile').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        if (tv) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          await tester.pump();
+          expect(CustomTVTextField.isKeyboardVisibleNotifier.value, isTrue);
+          await tester.binding.handlePopRoute();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          await tester.pump();
+          expect(CustomTVTextField.isKeyboardVisibleNotifier.value, isFalse);
+          expect(find.text('Save'), findsOneWidget);
+          tester
+                  .widget<CustomTVTextField>(find.byType(CustomTVTextField))
+                  .controller
+                  .text =
+              'Changed';
+        } else {
+          await tester.enterText(find.byType(TextField), 'Changed');
+        }
+        await tester.tap(find.bySemanticsLabel('gold avatar'));
+        await tester.tap(find.text('Save'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        verify(
+          () => api.save(
+            profile: profiles.first,
+            name: 'Changed',
+            avatar: 'gold',
+          ),
+        ).called(1);
+        await tester.tap(find.text('Edit profile').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        await tester.tap(find.bySemanticsLabel('pink avatar'));
+        await tester.tap(find.text('Cancel'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump();
+        verifyNever(
+          () => api.save(
+            profile: profiles.first,
+            name: 'Original',
+            avatar: 'pink',
+          ),
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
