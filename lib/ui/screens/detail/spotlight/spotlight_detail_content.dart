@@ -484,7 +484,8 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
 
   Future<void> _openSeasonEpisodes(AggregatedItem season) async {
     final seasonFocus = FocusManager.instance.primaryFocus;
-    var episodes = _vm.browseSeasonEpisodes(season);
+    var visibleEpisodes = _vm.cachedBrowsedSeason(season);
+    var episodes = _vm.refreshBrowsedSeason(season);
     final action = await SpotlightSectionModal.show<VoidCallback>(
       context,
       title: '${_vm.item?.name ?? ''} · ${season.name}',
@@ -500,7 +501,12 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
                 FutureBuilder<List<AggregatedItem>>(
                   future: episodes,
                   builder: (modalContext, snapshot) {
-                    if (snapshot.hasError) {
+                    if (snapshot.hasData &&
+                        snapshot.connectionState == ConnectionState.done) {
+                      visibleEpisodes = snapshot.data;
+                    }
+                    if (snapshot.hasError &&
+                        (visibleEpisodes?.isEmpty ?? true)) {
                       return TextButton.icon(
                         onPressed: () => update(() {
                           episodes = _vm.refreshBrowsedSeason(season);
@@ -509,15 +515,17 @@ class _SpotlightDetailContentState extends State<SpotlightDetailContent> {
                         label: const Text('Could not load episodes. Retry'),
                       );
                     }
-                    if (!snapshot.hasData) {
+                    if (visibleEpisodes == null ||
+                        (visibleEpisodes!.isEmpty &&
+                            snapshot.connectionState != ConnectionState.done)) {
                       return const Center(child: CircularProgressIndicator());
                     }
-                    if (snapshot.data!.isEmpty) {
+                    if (visibleEpisodes!.isEmpty) {
                       return const Text('No episodes available.');
                     }
                     return SpotlightVirtualEpisodeGrid(
                       key: ValueKey(season.id),
-                      items: snapshot.data!,
+                      items: visibleEpisodes!,
                       imageApi: _vm.imageApi,
                       prefs: widget.prefs,
                       firstFocusNode: firstFocusNode,

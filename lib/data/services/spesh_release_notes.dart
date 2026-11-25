@@ -20,7 +20,14 @@ const speshRokuParityReleaseNotes = <String>[
   'Profile editing, keyboard/cancel, guide, episode, calendar and playback regressions retained. Server resume thresholds are unchanged.',
   ...speshProfileReleaseNotes,
 ];
+const speshEpisodeRefreshReleaseNotes = <String>[
+  'More Episodes refreshes the selected season while keeping the current episodes visible.',
+  'Remote navigation reaches the last row, even when it has only one episode.',
+  'Season posters fall back to series artwork if unavailable.',
+  ...speshRokuParityReleaseNotes,
+];
 List<String> speshReleaseNotesForBuild(String build) => switch (build) {
+  '30000210' || '2000077' => speshEpisodeRefreshReleaseNotes,
   '30000209' || '2000076' => speshRokuParityReleaseNotes,
   '30000208' || '2000075' => speshProfileReleaseNotes,
   '30000207' || '2000074' => speshCurrentReleaseNotes,

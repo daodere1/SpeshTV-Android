@@ -405,6 +405,7 @@ class JellyfinItemsApi implements ItemsApi {
   }) async {
     final response = await _dio.get(
       '/Shows/$seriesId/Episodes',
+      options: Options(headers: {'Cache-Control': 'no-cache, no-store'}),
       queryParameters: {
         'UserId': _getUserId(),
         'SeasonId': ?seasonId,

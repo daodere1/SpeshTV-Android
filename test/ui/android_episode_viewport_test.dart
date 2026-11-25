@@ -353,4 +353,55 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets(
+    'refresh keeps episode focus and Down reaches a single-card final row',
+    (tester) async {
+      PlatformDetection.setInterfaceLayout(InterfaceLayout.tv);
+      addTearDown(
+        () => PlatformDetection.setInterfaceLayout(InterfaceLayout.automatic),
+      );
+      final initial = FocusNode();
+      addTearDown(initial.dispose);
+      var items = [episode(1), episode(2), episode(3)];
+      late StateSetter update;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 800,
+                height: 400,
+                child: StatefulBuilder(
+                  builder: (_, set) {
+                    update = set;
+                    return SpotlightVirtualEpisodeGrid(
+                      items: items,
+                      imageApi: Images(),
+                      prefs: prefs,
+                      currentItemId: 's1e3',
+                      firstFocusNode: initial,
+                      onItemTap: (_) {},
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(initial.hasFocus, true);
+      update(() => items = [...items, episode(4)]);
+      await tester.pumpAndSettle();
+      expect(initial.hasFocus, true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      final card = FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<MediaCard>();
+      expect(card?.title, contains('Episode 4'));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }

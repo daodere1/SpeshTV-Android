@@ -3,6 +3,7 @@ import '../../../../navigation/route_lifecycle_observer.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:server_core/server_core.dart';
 
 import '../../../../../data/models/aggregated_item.dart';
@@ -57,7 +58,52 @@ class _SpotlightVirtualEpisodeGridState
     if (_scroll.hasClients) _scroll.jumpTo(_scroll.offset);
   }
 
+  late List<AggregatedItem> _items = _uniqueEpisodes(widget.items);
+
+  static List<AggregatedItem> _uniqueEpisodes(List<AggregatedItem> items) {
+    final seen = <String>{};
+    return [
+      for (final item in items)
+        if (seen.add(item.id)) item,
+    ];
+  }
+
+  final _episodeNodes = <String, FocusNode>{};
+  String? _focusedEpisode;
   String? _anchor;
+  String? _initialAnchor;
+
+  FocusNode _node(String id) =>
+      id == _initialAnchor && widget.firstFocusNode != null
+      ? widget.firstFocusNode!
+      : _episodeNodes.putIfAbsent(id, () => FocusNode(debugLabel: id));
+
+  @override
+  void didUpdateWidget(covariant SpotlightVirtualEpisodeGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.items, widget.items)) return;
+    _items = _uniqueEpisodes(widget.items);
+    final id = _focusedEpisode;
+    if (id == null || !_node(id).hasFocus) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !(ModalRoute.of(context)?.isCurrent ?? true) ||
+          _focusedEpisode != id ||
+          _node(id).hasFocus)
+        return;
+      if (_items.any((item) => item.id == id)) {
+        if (_node(id).context == null) {
+          setState(() {
+            _anchor = id;
+            _positioned = false;
+          });
+        } else {
+          _node(id).requestFocus();
+        }
+      }
+    });
+  }
+
   bool _positioned = false;
   int _generation = 0;
   @override
@@ -65,20 +111,20 @@ class _SpotlightVirtualEpisodeGridState
     routeLifecycleObserver.unsubscribe(this);
     _generation++;
     _scroll.dispose();
+    for (final node in _episodeNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.items.isEmpty)
+    if (_items.isEmpty)
       return const Center(child: Text('No episodes available.'));
-    _anchor ??= widget
-        .items[spotlightInitialEpisodeIndex(
-              widget.items,
-              widget.currentItemId,
-            ) ??
-            0]
-        .id;
+    _anchor ??=
+        _items[spotlightInitialEpisodeIndex(_items, widget.currentItemId) ?? 0]
+            .id;
+    _initialAnchor ??= _anchor;
     return LayoutBuilder(
       builder: (context, constraints) {
         assert(
@@ -99,7 +145,7 @@ class _SpotlightVirtualEpisodeGridState
             metrics.cellWidth / (16 / 9) +
             72 * MediaQuery.textScalerOf(context).scale(1) +
             metrics.runSpacing * (expanded ? 2 : 1);
-        final target = widget.items.indexWhere((item) => item.id == _anchor);
+        final target = _items.indexWhere((item) => item.id == _anchor);
         if (!_positioned && target >= 0) {
           _positioned = true;
           final generation = _generation;
@@ -118,14 +164,14 @@ class _SpotlightVirtualEpisodeGridState
             void focusTarget() {
               if (mounted &&
                   generation == _generation &&
-                  PlatformDetection.isTV &&
+                  (PlatformDetection.isTV || _focusedEpisode != null) &&
                   (ModalRoute.of(context)?.isCurrent ?? true) &&
-                  widget.firstFocusNode?.context != null) {
-                widget.firstFocusNode?.requestFocus();
+                  _node(_anchor!).context != null) {
+                _node(_anchor!).requestFocus();
               }
             }
 
-            if (widget.firstFocusNode?.context != null)
+            if (_node(_anchor!).context != null)
               focusTarget();
             else
               WidgetsBinding.instance.addPostFrameCallback(
@@ -133,32 +179,76 @@ class _SpotlightVirtualEpisodeGridState
               );
           });
         }
-        final rows = (widget.items.length / metrics.columns).ceil();
-        return ListView.builder(
-          controller: _scroll,
-          primary: false,
-          itemExtent: extent,
-          cacheExtent: extent * 2,
-          itemCount: rows,
-          itemBuilder: (context, row) {
-            final start = row * metrics.columns;
-            final end = math.min(start + metrics.columns, widget.items.length);
-            final entries = widget.items.sublist(start, end);
-            final containsAnchor = entries.any((item) => item.id == _anchor);
-            return SpotlightMediaGridSection(
-              key: ValueKey(entries.first.id),
-              items: entries,
-              imageApi: widget.imageApi,
-              prefs: widget.prefs,
-              aspectRatio: 16 / 9,
-              landscapeCells: true,
-              anchorOnOpen: false,
-              currentItemId: containsAnchor ? _anchor : widget.currentItemId,
-              firstFocusNode: containsAnchor ? widget.firstFocusNode : null,
-              onItemTap: widget.onItemTap,
-              onItemChanged: widget.onItemChanged,
+        final rows = (_items.length / metrics.columns).ceil();
+        return Focus(
+          canRequestFocus: false,
+          onKeyEvent: (_, event) {
+            if (event is! KeyDownEvent && event is! KeyRepeatEvent)
+              return KeyEventResult.ignored;
+            final key = event.logicalKey;
+            if (key != LogicalKeyboardKey.arrowDown &&
+                key != LogicalKeyboardKey.arrowUp) {
+              return KeyEventResult.ignored;
+            }
+            final index = _items.indexWhere(
+              (item) => item.id == _focusedEpisode,
             );
+            if (index < 0 || !_node(_items[index].id).hasFocus)
+              return KeyEventResult.ignored;
+            final row = index ~/ metrics.columns;
+            final nextRow =
+                row + (key == LogicalKeyboardKey.arrowDown ? 1 : -1);
+            if (nextRow < 0 || nextRow >= rows) return KeyEventResult.ignored;
+            final nextIndex = math.min(
+              nextRow * metrics.columns + index % metrics.columns,
+              _items.length - 1,
+            );
+            final sourceId = _items[index].id;
+            final nextId = _items[nextIndex].id;
+            final nextNode = _node(nextId);
+            if (nextNode.context != null) {
+              nextNode.requestFocus();
+            } else {
+              _scroll.jumpTo(
+                (nextRow * extent).clamp(0.0, _scroll.position.maxScrollExtent),
+              );
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted &&
+                    (ModalRoute.of(context)?.isCurrent ?? true) &&
+                    _focusedEpisode == sourceId &&
+                    nextNode.context != null)
+                  nextNode.requestFocus();
+              });
+            }
+            return KeyEventResult.handled;
           },
+          child: ListView.builder(
+            controller: _scroll,
+            primary: false,
+            itemExtent: extent,
+            cacheExtent: extent * 2,
+            itemCount: rows,
+            itemBuilder: (context, row) {
+              final start = row * metrics.columns;
+              final end = math.min(start + metrics.columns, _items.length);
+              final entries = _items.sublist(start, end);
+
+              return SpotlightMediaGridSection(
+                key: ValueKey(entries.first.id),
+                items: entries,
+                imageApi: widget.imageApi,
+                prefs: widget.prefs,
+                aspectRatio: 16 / 9,
+                landscapeCells: true,
+                anchorOnOpen: false,
+                currentItemId: widget.currentItemId,
+                episodeFocusNode: (item) => _node(item.id),
+                onEpisodeFocus: (item) => _focusedEpisode = item.id,
+                onItemTap: widget.onItemTap,
+                onItemChanged: widget.onItemChanged,
+              );
+            },
+          ),
         );
       },
     );

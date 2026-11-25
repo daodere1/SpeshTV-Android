@@ -99,8 +99,18 @@ void main() {
 
   group('ItemDetailViewModel.compareFeatures', () {
     test('sorts by index number first, ignoring parentIndexNumber', () {
-      final f1 = makeEpisode(id: 'f1', season: 2, episode: 1, name: 'Feature B');
-      final f2 = makeEpisode(id: 'f2', season: 1, episode: 2, name: 'Feature A');
+      final f1 = makeEpisode(
+        id: 'f1',
+        season: 2,
+        episode: 1,
+        name: 'Feature B',
+      );
+      final f2 = makeEpisode(
+        id: 'f2',
+        season: 1,
+        episode: 2,
+        name: 'Feature A',
+      );
       final list = [f2, f1]..sort(ItemDetailViewModel.compareFeatures);
 
       expect(list.map((f) => f.id), ['f1', 'f2']);
@@ -120,20 +130,42 @@ void main() {
   // view model keeps it as sent.
   group('episode lists keep the server order', () {
     final airedOrder = [
-      {'Id': 's1e1', 'Type': 'Episode', 'ParentIndexNumber': 1, 'IndexNumber': 1},
-      {'Id': 's0e2', 'Type': 'Episode', 'ParentIndexNumber': 0, 'IndexNumber': 2},
-      {'Id': 's1e2', 'Type': 'Episode', 'ParentIndexNumber': 1, 'IndexNumber': 2},
-      {'Id': 's0e1', 'Type': 'Episode', 'ParentIndexNumber': 0, 'IndexNumber': 1},
+      {
+        'Id': 's1e1',
+        'Type': 'Episode',
+        'ParentIndexNumber': 1,
+        'IndexNumber': 1,
+      },
+      {
+        'Id': 's0e2',
+        'Type': 'Episode',
+        'ParentIndexNumber': 0,
+        'IndexNumber': 2,
+      },
+      {
+        'Id': 's1e2',
+        'Type': 'Episode',
+        'ParentIndexNumber': 1,
+        'IndexNumber': 2,
+      },
+      {
+        'Id': 's0e1',
+        'Type': 'Episode',
+        'ParentIndexNumber': 0,
+        'IndexNumber': 1,
+      },
     ];
     const expected = ['s1e1', 's0e2', 's1e2', 's0e1'];
 
     test('for every episode of a series', () async {
       when(
-        () => itemsApi.getItem('series-1', mediaSourceId: any(named: 'mediaSourceId')),
+        () => itemsApi.getItem(
+          'series-1',
+          mediaSourceId: any(named: 'mediaSourceId'),
+        ),
       ).thenAnswer((_) async => {'Id': 'series-1', 'Type': 'Series'});
-      when(
-        () => itemsApi.getEpisodes('series-1', fields: any(named: 'fields')),
-      ).thenAnswer((_) async => {'Items': airedOrder});
+      when(() => itemsApi.getEpisodes('series-1', fields: any(named: 'fields')))
+          .thenAnswer((_) async => {'Items': airedOrder});
 
       final vm = createViewModel('series-1');
       await vm.load();
@@ -144,7 +176,10 @@ void main() {
 
     test('for one season', () async {
       when(
-        () => itemsApi.getItem('season-1', mediaSourceId: any(named: 'mediaSourceId')),
+        () => itemsApi.getItem(
+          'season-1',
+          mediaSourceId: any(named: 'mediaSourceId'),
+        ),
       ).thenAnswer(
         (_) async => {
           'Id': 'season-1',
@@ -172,16 +207,83 @@ void main() {
     });
   });
 
+  test(
+    'opening a cached season discovers newly added episodes on refresh',
+    () async {
+      Map<String, dynamic> episode(int number) => {
+        'Id': 'e$number',
+        'Type': 'Episode',
+        'IndexNumber': number,
+        'ParentIndexNumber': 4,
+        'SeasonId': 'season-4',
+      };
+      when(
+        () => itemsApi.getItem(
+          'series-1',
+          mediaSourceId: any(named: 'mediaSourceId'),
+        ),
+      ).thenAnswer((_) async => {'Id': 'series-1', 'Type': 'Series'});
+      when(() => itemsApi.getEpisodes('series-1', fields: any(named: 'fields')))
+          .thenAnswer(
+            (_) async => {
+              'Items': [episode(8), episode(9)],
+            },
+          );
+      when(
+        () => itemsApi.getEpisodes(
+          'series-1',
+          seasonId: 'season-4',
+          fields: any(named: 'fields'),
+        ),
+      ).thenAnswer(
+        (_) async => {
+          'Items': [episode(8), episode(9), episode(10)],
+        },
+      );
+
+      final vm = createViewModel('series-1');
+      addTearDown(vm.dispose);
+      await vm.load();
+      await vm.loadAllSeriesEpisodes();
+      final season = AggregatedItem(
+        id: 'season-4',
+        serverId: vm.item!.serverId,
+        rawData: {'Type': 'Season', 'SeriesId': 'series-1', 'IndexNumber': 4},
+      );
+      expect(vm.cachedBrowsedSeason(season)?.map((e) => e.id), ['e8', 'e9']);
+      final latest = await vm.refreshBrowsedSeason(season);
+      expect(latest.map((e) => e.id), ['e8', 'e9', 'e10']);
+      expect(vm.cachedBrowsedSeason(season)?.map((e) => e.id), [
+        'e8',
+        'e9',
+        'e10',
+      ]);
+    },
+  );
+
   group('_loadFeatures ordering', () {
     test('orders special features by index number and name', () async {
       when(
-        () => itemsApi.getItem('movie-1', mediaSourceId: any(named: 'mediaSourceId')),
+        () => itemsApi.getItem(
+          'movie-1',
+          mediaSourceId: any(named: 'mediaSourceId'),
+        ),
       ).thenAnswer((_) async => {'Id': 'movie-1', 'Type': 'Movie'});
 
       when(() => itemsApi.getSpecialFeatures('movie-1')).thenAnswer(
         (_) async => [
-          {'Id': 'f2', 'Type': 'Video', 'IndexNumber': 2, 'Name': 'Featurette B'},
-          {'Id': 'f1', 'Type': 'Video', 'IndexNumber': 1, 'Name': 'Featurette A'},
+          {
+            'Id': 'f2',
+            'Type': 'Video',
+            'IndexNumber': 2,
+            'Name': 'Featurette B',
+          },
+          {
+            'Id': 'f1',
+            'Type': 'Video',
+            'IndexNumber': 1,
+            'Name': 'Featurette A',
+          },
         ],
       );
 
@@ -192,10 +294,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
 
-      expect(
-        vm.features.map((f) => f.id).toList(),
-        ['f1', 'f2'],
-      );
+      expect(vm.features.map((f) => f.id).toList(), ['f1', 'f2']);
     });
   });
 }

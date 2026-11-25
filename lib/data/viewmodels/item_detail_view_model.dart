@@ -1071,6 +1071,10 @@ class ItemDetailViewModel extends ChangeNotifier {
       futures.add(_loadEpisodes());
       optional.add(_loadFeatures);
     } else if (type == 'Episode') {
+      final seriesId = _item?.seriesId;
+      if (seriesId != null && seriesId.isNotEmpty) {
+        optional.add(() => _loadSeasons(seriesId: seriesId));
+      }
       optional.add(_loadRatings);
       futures.add(_loadEpisodes());
       optional.addAll([_loadSimilar, _loadFeatures]);
@@ -1116,10 +1120,10 @@ class ItemDetailViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadSeasons() async {
+  Future<void> _loadSeasons({String? seriesId}) async {
     try {
       final data = await _client.itemsApi.getSeasons(
-        itemId,
+        seriesId ?? itemId,
         fields: 'ChildCount,UserData,Overview,ProviderIds',
       );
       final items = (data['Items'] as List?) ?? [];
@@ -1131,29 +1135,31 @@ class ItemDetailViewModel extends ChangeNotifier {
     }
   }
 
+  List<AggregatedItem>? cachedBrowsedSeason(AggregatedItem season) {
+    final seriesId = season.seriesId ?? _item?.seriesId ?? itemId;
+    if (season.serverId != _item?.serverId ||
+        seriesId != (_item?.seriesId ?? itemId))
+      return null;
+    final loaded = episodesForSpotlightSeason(
+      _seriesEpisodesLoaded ? _seriesEpisodes : _episodes,
+      season,
+      fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
+    );
+    return _seriesEpisodesLoaded || (_episodesLoaded && loaded.isNotEmpty)
+        ? loaded
+        : null;
+  }
+
   /// Fetch a browsed season without replacing the series detail behind it.
   Future<List<AggregatedItem>> browseSeasonEpisodes(
     AggregatedItem season, {
     bool forceRefresh = false,
   }) async {
-    final seriesId = season.seriesId ?? _item?.seriesId ?? itemId;
-    final sameContext =
-        season.serverId == _item?.serverId &&
-        seriesId == (_item?.seriesId ?? itemId);
-    if (!forceRefresh && sameContext) {
-      if (_seriesEpisodesLoaded)
-        return episodesForSpotlightSeason(
-          _seriesEpisodes,
-          season,
-          fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
-        );
-      final loaded = episodesForSpotlightSeason(
-        _episodes,
-        season,
-        fallbackSeasonNumber: _item?.parentIndexNumber ?? 1,
-      );
-      if (_episodesLoaded && loaded.isNotEmpty) return loaded;
+    if (!forceRefresh) {
+      final cached = cachedBrowsedSeason(season);
+      if (cached != null) return cached;
     }
+    final seriesId = season.seriesId ?? _item?.seriesId ?? itemId;
     final synthetic = season.rawData['_speshSyntheticSeason'] == true;
     final data = await _client.itemsApi.getEpisodes(
       seriesId,
@@ -1173,12 +1179,26 @@ class ItemDetailViewModel extends ChangeNotifier {
         : mapped;
   }
 
+  final _seasonRefreshes = <String, Object>{};
+
   Future<List<AggregatedItem>> refreshBrowsedSeason(
     AggregatedItem season,
   ) async {
     final contextItem = _item;
-    final fresh = await browseSeasonEpisodes(season, forceRefresh: true);
-    if (_spotlightDisposed || !identical(contextItem, _item)) return fresh;
+    final request = Object();
+    _seasonRefreshes[season.id] = request;
+    late final List<AggregatedItem> fresh;
+    try {
+      fresh = await browseSeasonEpisodes(season, forceRefresh: true);
+      if (_spotlightDisposed ||
+          !identical(contextItem, _item) ||
+          !identical(_seasonRefreshes[season.id], request))
+        return fresh;
+    } finally {
+      if (identical(_seasonRefreshes[season.id], request)) {
+        _seasonRefreshes.remove(season.id);
+      }
+    }
     if (_seriesEpisodesLoaded) {
       _seriesEpisodes =
           [

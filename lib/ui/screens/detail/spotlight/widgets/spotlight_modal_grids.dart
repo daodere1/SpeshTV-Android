@@ -139,6 +139,9 @@ class SpotlightMediaGridSection extends StatefulWidget {
   final Map<int, int>? seerrSeasonStatus;
   final String? currentItemId;
   final bool anchorOnOpen;
+  final AggregatedItem? seriesContext;
+  final FocusNode? Function(AggregatedItem)? episodeFocusNode;
+  final ValueChanged<AggregatedItem>? onEpisodeFocus;
 
   const SpotlightMediaGridSection({
     super.key,
@@ -153,6 +156,9 @@ class SpotlightMediaGridSection extends StatefulWidget {
     this.seerrSeasonStatus,
     this.currentItemId,
     this.anchorOnOpen = true,
+    this.seriesContext,
+    this.episodeFocusNode,
+    this.onEpisodeFocus,
   });
 
   @override
@@ -243,6 +249,26 @@ class _SpotlightMediaGridSectionState extends State<SpotlightMediaGridSection> {
                         showAvailabilityBadges &&
                         SeerrMediaStatus.hasDot(seasonSeerrStatus);
 
+                    final parent = widget.seriesContext;
+                    final seriesId =
+                        entry.seriesId ??
+                        (parent?.type == 'Series'
+                            ? parent?.id
+                            : parent?.seriesId);
+                    final seriesTag =
+                        entry.rawData['SeriesPrimaryImageTag'] as String? ??
+                        (parent?.id == seriesId
+                            ? parent?.primaryImageTag
+                            : parent?.rawData['SeriesPrimaryImageTag']
+                                  as String?);
+                    final fallback =
+                        isSeason && !isSeerrItem && seriesId != null
+                        ? imageApi.getPrimaryImageUrl(
+                            seriesId,
+                            maxHeight: 360,
+                            tag: seriesTag,
+                          )
+                        : null;
                     final card = MediaCard(
                       key: ValueKey(cellKeys[i]),
                       title:
@@ -251,15 +277,17 @@ class _SpotlightMediaGridSectionState extends State<SpotlightMediaGridSection> {
                           : entry.name,
                       subtitle: entry.personRole,
                       titleColor: titleColor,
-                      imageUrl: spotlightItemImageUrl(imageApi, entry),
+                      imageUrl:
+                          spotlightItemImageUrl(imageApi, entry) ?? fallback,
+                      fallbackImageUrl: fallback,
                       width: metrics.cellWidth,
                       aspectRatio: aspectRatio,
                       isPlayed: entry.isPlayed,
                       isFavorite: entry.isFavorite,
                       itemType: entry.type,
-                      focusNode: i == (initialEpisode ?? 0)
-                          ? firstFocusNode
-                          : null,
+                      focusNode:
+                          widget.episodeFocusNode?.call(entry) ??
+                          (i == (initialEpisode ?? 0) ? firstFocusNode : null),
                       focusColor: focusColor,
                       cardFocusExpansion: cardExpansion,
                       suppressFocusGlow: isNeon,
@@ -322,7 +350,10 @@ class _SpotlightMediaGridSectionState extends State<SpotlightMediaGridSection> {
                             ),
                           ),
                       ],
-                      onFocus: () => spotlightScrollCellIntoView(cellContext),
+                      onFocus: () {
+                        widget.onEpisodeFocus?.call(entry);
+                        spotlightScrollCellIntoView(cellContext);
+                      },
                       onTap: () => onItemTap(entry),
                       onLongPress: isSeerrItem || entry.type != 'Episode'
                           ? null

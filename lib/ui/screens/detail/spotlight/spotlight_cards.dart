@@ -376,6 +376,7 @@ class _SpotlightCardsBuilder {
               onItemChanged: () => vm.refreshEpisodeLists(),
             )
           : SpotlightMediaGridSection(
+              seriesContext: vm.item,
               items: items,
               imageApi: _imageApi,
               prefs: prefs,
