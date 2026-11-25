@@ -27,7 +27,7 @@ const speshEpisodeRefreshReleaseNotes = <String>[
   ...speshRokuParityReleaseNotes,
 ];
 List<String> speshReleaseNotesForBuild(String build) => switch (build) {
-  '30000210' || '2000077' => speshEpisodeRefreshReleaseNotes,
+  '30000211' || '2000078' || '30000210' || '2000077' => speshEpisodeRefreshReleaseNotes,
   '30000209' || '2000076' => speshRokuParityReleaseNotes,
   '30000208' || '2000075' => speshProfileReleaseNotes,
   '30000207' || '2000074' => speshCurrentReleaseNotes,
