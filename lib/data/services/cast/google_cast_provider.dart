@@ -1,9 +1,7 @@
 import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
 import 'package:playback_core/playback_core.dart';
-import 'package:playback_emby/playback_emby.dart';
 import 'package:playback_jellyfin/playback_jellyfin.dart';
-import 'package:playback_plex/playback_plex.dart';
 import 'package:server_core/server_core.dart';
 
 import '../../../preference/user_preferences.dart';
@@ -44,8 +42,7 @@ class GoogleCastProvider implements CastProvider, CastTransportControls {
   MediaStreamResolver _resolverForClient(MediaServerClient client) {
     return switch (client.serverType) {
       ServerType.jellyfin => JellyfinPlugin(client).createStreamResolver(),
-      ServerType.emby => EmbyPlugin(client).createStreamResolver(),
-      ServerType.plex => PlexMediaStreamResolver(client),
+      _ => throw UnsupportedError('Only Jellyfin playback is supported'),
     };
   }
 

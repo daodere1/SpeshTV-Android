@@ -1,6 +1,6 @@
 # SpeshTV for Android and Android TV
 
-SpeshTV is a customized media client for Jellyfin and Emby, built on Moonfin-Core.
+SpeshTV is a customized media client for Jellyfin, built on Moonfin-Core.
 This repository contains the shared source used for our Android mobile/tablet,
 Android TV, Google TV and Fire TV builds. Other platform source is retained
 because the application and its vendored packages share Flutter code.
@@ -52,7 +52,7 @@ implementation identifiers, not the displayed product brand.
 ## Credits and license
 
 SpeshTV is an independent fork, not an official Moonfin release. Thanks to
-[Moonfin-Core](https://github.com/Moonfin-Client/Moonfin-Core), Jellyfin, Emby,
+[Moonfin-Core](https://github.com/Moonfin-Client/Moonfin-Core), Jellyfin,
 Flutter and the authors of the included dependencies. Upstream attribution and
 third-party notices remain in their source files. The license accompanying this
 customized source is preserved in [LICENSE](LICENSE); vendored packages retain

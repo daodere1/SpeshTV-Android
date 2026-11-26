@@ -11,9 +11,7 @@ import '../widgets/spesh_cinematic.dart';
 import '../screens/calendar/cinematic_calendar_screen.dart';
 import 'spesh_web_entry.dart';
 
-import 'package:server_core/server_core.dart' show ServerType;
 
-import '../../auth/repositories/server_repository.dart';
 import '../../auth/repositories/session_repository.dart';
 import '../../auth/repositories/user_repository.dart';
 import '../../data/services/connectivity_service.dart';
@@ -28,8 +26,6 @@ import '../../util/game_cores.dart';
 import '../../util/platform_detection.dart';
 import '../screens/admin/admin_nav.dart';
 import '../screens/admin/admin_routes.dart';
-import '../screens/auth/emby_connect_screen.dart';
-import '../screens/auth/plex_sign_in_screen.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/server_screen.dart';
 import '../screens/auth/server_select_screen.dart';
@@ -94,8 +90,6 @@ import 'route_lifecycle_observer.dart';
 const _authRoutes = {
   Destinations.startup,
   Destinations.serverSelect,
-  Destinations.embyConnect,
-  Destinations.plexSignIn,
   Destinations.webDiagnostics,
   Destinations.server,
   Destinations.login,
@@ -259,15 +253,6 @@ final appRouter = GoRouter(
       builder: (context, state) => const SetupWizardScreen(),
     ),
     GoRoute(
-      path: Destinations.embyConnect,
-      builder: (context, state) => const EmbyConnectScreen(),
-    ),
-    GoRoute(
-      path: Destinations.plexSignIn,
-      builder: (context, state) =>
-          PlexSignInScreen(address: state.uri.queryParameters['address']),
-    ),
-    GoRoute(
       path: Destinations.webDiagnostics,
       builder: (context, state) => WebDiagnosticsScreen(
         reason: state.uri.queryParameters['reason'],
@@ -284,16 +269,6 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: Destinations.login,
-      // A Plex server has no password sign-in of its own, only plex.tv's.
-      redirect: (context, state) {
-        final serverId = state.uri.queryParameters['serverId'];
-        final server = serverId == null
-            ? null
-            : GetIt.instance<ServerRepository>().getServer(serverId);
-        return server?.serverType == ServerType.plex
-            ? Destinations.plexSignIn
-            : null;
-      },
       builder: (context, state) {
         final serverId = state.uri.queryParameters['serverId'] ?? '';
         final username = state.uri.queryParameters['username'];

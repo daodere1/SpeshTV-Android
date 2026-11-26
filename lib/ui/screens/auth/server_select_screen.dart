@@ -322,6 +322,7 @@ class _ServerSelectScreenState extends State<ServerSelectScreen> {
     _discoverySub?.cancel();
     _discoverySub = _discoveryService.discoverLocalServers().listen(
       (server) {
+        if (server.serverType != ServerType.jellyfin) return;
         final savedAddresses = _serverRepo.servers
             .map((s) => s.address)
             .toSet();
@@ -405,12 +406,8 @@ class _ServerSelectScreenState extends State<ServerSelectScreen> {
   }
 
   Future<void> _connectToDiscovered(DiscoveredServer discovered) async {
+    if (discovered.serverType != ServerType.jellyfin) return;
     if (_isConnecting) return;
-    // A Plex server is saved from its plex.tv sign-in.
-    if (discovered.serverType == ServerType.plex) {
-      context.go(Destinations.plexSignIn);
-      return;
-    }
     if (mounted) {
       setState(() {
         _isConnecting = true;
@@ -745,15 +742,6 @@ class _ServerSelectScreenState extends State<ServerSelectScreen> {
       case AddServerSaved(:final serverId):
         _addressController.clear();
         context.go('${Destinations.server}?serverId=$serverId');
-      case AddServerPlexSignIn(:final address):
-        context.go(
-          Uri(
-            path: Destinations.plexSignIn,
-            queryParameters: address == null ? null : {'address': address},
-          ).toString(),
-        );
-      case AddServerEmbyConnect():
-        context.go(Destinations.embyConnect);
       case null:
         // The dialog may have saved or removed a server.
         setState(() {});

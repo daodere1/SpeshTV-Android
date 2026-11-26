@@ -26,7 +26,12 @@ const speshEpisodeRefreshReleaseNotes = <String>[
   'Season posters fall back to series artwork if unavailable.',
   ...speshRokuParityReleaseNotes,
 ];
+const speshJellyfinOnlyReleaseNotes = <String>[
+  'Add Server connects directly to Jellyfin. Emby and Plex integrations have been removed.',
+  ...speshEpisodeRefreshReleaseNotes,
+];
 List<String> speshReleaseNotesForBuild(String build) => switch (build) {
+  '30000212' || '2000079' => speshJellyfinOnlyReleaseNotes,
   '30000211' || '2000078' || '30000210' || '2000077' => speshEpisodeRefreshReleaseNotes,
   '30000209' || '2000076' => speshRokuParityReleaseNotes,
   '30000208' || '2000075' => speshProfileReleaseNotes,

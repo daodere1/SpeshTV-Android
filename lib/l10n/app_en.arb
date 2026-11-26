@@ -6283,7 +6283,7 @@
   "@groupItemsIntoCollectionsDialogTitle": {
     "description": "Title of the alert dialog explaining server settings requirement"
   },
-  "groupItemsIntoCollectionsDialogMessage": "To use this setting, please ensure the \"Group movies into collections\" and/or \"Group shows into collections\" Library settings are enabled under your library's Display settings on your Jellyfin or Emby server.",
+  "groupItemsIntoCollectionsDialogMessage": "To use this setting, please ensure the \"Group movies into collections\" and/or \"Group shows into collections\" Library settings are enabled under your library's Display settings on your Jellyfin server.",
   "@groupItemsIntoCollectionsDialogMessage": {
     "description": "Message of the alert dialog explaining server settings requirement"
   },

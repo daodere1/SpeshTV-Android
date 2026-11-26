@@ -41,14 +41,9 @@ class _AdminLiveTvScreenState extends State<AdminLiveTvScreen>
   List<Map<String, dynamic>> _providers = const [];
   List<Map<String, dynamic>> _discovered = const [];
 
-  /// The guide sources Add offers. Emby lists its own.
-  List<String> _guideSources = const ['SchedulesDirect', 'xmltv'];
+  static const List<String> _guideSources = const ['SchedulesDirect', 'xmltv'];
 
   AdminLiveTvApi get _api => GetIt.instance<MediaServerClient>().adminLiveTvApi;
-
-  EmbyAdminApi? get _emby => AdminServerScope.isEmby(context)
-      ? GetIt.instance<MediaServerClient>().embyAdminApi
-      : null;
 
   @override
   void initState() {
@@ -96,20 +91,10 @@ class _AdminLiveTvScreenState extends State<AdminLiveTvScreen>
     });
     try {
       final config = await _api.getLiveTvConfiguration();
-      final sources = await _emby
-          ?.getAvailableListingProviders()
-          .catchError((_) => [<String, dynamic>{'Id': 'xmltv'}]);
       if (!mounted) return;
       setState(() {
         _config = config;
         _setLists(config);
-        if (sources != null) {
-          // Only the sources this page has a form for.
-          _guideSources = [
-            for (final s in sources)
-              if (const {'xmltv', 'embygn'}.contains(s['Id'])) s['Id'] as String,
-          ];
-        }
         _tab = _tabFor(AdminSettingAnchor.pending.value) ?? _tab;
         _loading = false;
       });
@@ -193,7 +178,6 @@ class _AdminLiveTvScreenState extends State<AdminLiveTvScreen>
         api: _api,
         types: types,
         seed: seed,
-        emby: AdminServerScope.isEmby(context),
       ),
     );
     if (saved != true || !mounted) return;
@@ -241,11 +225,10 @@ class _AdminLiveTvScreenState extends State<AdminLiveTvScreen>
       switch (type.toLowerCase()) {
         'xmltv' => l10n.adminProviderXmltv,
         'schedulesdirect' => l10n.adminProviderSchedulesDirect,
-        'embygn' => l10n.adminProviderEmbyGuide,
         _ => null,
       };
 
-  /// [type] is 'xmltv', 'SchedulesDirect' or Emby's 'embygn'. A new XMLTV
+  /// A new XMLTV
   /// provider starts from the server's default.
   Future<void> _editProvider(
     String type, [
@@ -271,7 +254,6 @@ class _AdminLiveTvScreenState extends State<AdminLiveTvScreen>
               api: _api,
               seed: seed,
               tuners: _tuners,
-              embyGuide: type.toLowerCase() == 'embygn',
             ),
     );
     if (saved != true || !mounted) return;
@@ -300,7 +282,6 @@ class _AdminLiveTvScreenState extends State<AdminLiveTvScreen>
         builder: (_) => LiveTvChannelMapperDialog(
           api: _api,
           providerId: provider['Id'].toString(),
-          emby: _emby,
         ),
       );
 

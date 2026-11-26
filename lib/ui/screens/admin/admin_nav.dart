@@ -2,23 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:server_core/server_core.dart';
 
-import '../../../auth/repositories/server_repository.dart';
-import '../../../auth/repositories/session_repository.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../navigation/destinations.dart';
 
-/// The panel covers Jellyfin, and Emby from 4.9, the oldest Emby it was
-/// checked against.
-bool adminServerSupported() {
-  final getIt = GetIt.instance;
-  if (!getIt.isRegistered<MediaServerClient>()) return false;
-  if (getIt<MediaServerClient>().serverType == ServerType.jellyfin) return true;
-  final serverId = getIt<SessionRepository>().activeServerId;
-  final server = serverId == null
-      ? null
-      : getIt<ServerRepository>().getServer(serverId);
-  return server != null && embyVersionSupported(server.version);
-}
+bool adminServerSupported() =>
+    GetIt.instance.isRegistered<MediaServerClient>() &&
+    GetIt.instance<MediaServerClient>().serverType == ServerType.jellyfin;
 
 bool embyVersionSupported(String version) {
   final parts = version.split('.').map(int.tryParse).toList();
@@ -185,22 +174,6 @@ final List<AdminGroup> adminGroups = [
         title: (l) => l.adminDrawerLiveTv,
         description: (l) => l.adminPageDescLiveTv,
       ),
-      AdminPage(
-        id: 'live-tv-channels',
-        route: Destinations.adminLiveTvChannels,
-        icon: Icons.format_list_numbered,
-        title: (l) => l.adminDrawerLiveTvChannels,
-        description: (l) => l.adminPageDescLiveTvChannels,
-        servers: const {ServerType.emby},
-      ),
-      AdminPage(
-        id: 'cinema-intros',
-        route: Destinations.adminCinemaIntros,
-        icon: Icons.theaters_outlined,
-        title: (l) => l.adminDrawerCinemaIntros,
-        description: (l) => l.adminPageDescCinemaIntros,
-        servers: const {ServerType.emby},
-      ),
     ],
   ),
   AdminGroup(
@@ -231,14 +204,6 @@ final List<AdminGroup> adminGroups = [
         description: (l) => l.adminPageDescStreaming,
       ),
       AdminPage(
-        id: 'conversions',
-        route: Destinations.adminConversions,
-        icon: Icons.sync_outlined,
-        title: (l) => l.adminDrawerConversions,
-        description: (l) => l.adminPageDescConversions,
-        servers: const {ServerType.emby},
-      ),
-      AdminPage(
         id: 'trickplay',
         route: Destinations.adminSettingsTrickplay,
         icon: Icons.view_comfy,
@@ -266,22 +231,6 @@ final List<AdminGroup> adminGroups = [
         icon: Icons.devices,
         title: (l) => l.adminDrawerDevices,
         description: (l) => l.adminPageDescDevices,
-      ),
-      AdminPage(
-        id: 'camera-upload',
-        route: Destinations.adminCameraUpload,
-        icon: Icons.photo_camera_outlined,
-        title: (l) => l.adminDrawerCameraUpload,
-        description: (l) => l.adminPageDescCameraUpload,
-        servers: const {ServerType.emby},
-      ),
-      AdminPage(
-        id: 'dlna',
-        route: Destinations.adminDlna,
-        icon: Icons.cast_outlined,
-        title: (l) => l.adminDrawerDlna,
-        description: (l) => l.adminPageDescDlna,
-        servers: const {ServerType.emby},
       ),
       AdminPage(
         id: 'api-keys',
@@ -339,22 +288,6 @@ final List<AdminGroup> adminGroups = [
         icon: Icons.backup_outlined,
         title: (l) => l.adminDrawerBackups,
         description: (l) => l.adminPageDescBackups,
-      ),
-      AdminPage(
-        id: 'database',
-        route: Destinations.adminDatabase,
-        icon: Icons.storage_outlined,
-        title: (l) => l.adminDrawerDatabase,
-        description: (l) => l.adminPageDescDatabase,
-        servers: const {ServerType.emby},
-      ),
-      AdminPage(
-        id: 'premiere',
-        route: Destinations.adminPremiere,
-        icon: Icons.workspace_premium_outlined,
-        title: (l) => l.adminDrawerPremiere,
-        description: (l) => l.adminPageDescPremiere,
-        servers: const {ServerType.emby},
       ),
       AdminPage(
         id: 'logs',

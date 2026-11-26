@@ -35,8 +35,6 @@ class Destinations {
   // Auth
   static const startup = '/';
   static const serverSelect = '/server-select';
-  static const embyConnect = '/emby-connect';
-  static const plexSignIn = '/plex-sign-in';
   static const webDiagnostics = '/_diag';
 
   static String webDiagnosticsRoute({

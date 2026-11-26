@@ -218,8 +218,8 @@ class ServerRepository {
 
     try {
       final result = await probeServerPublicInfo(dio, baseUrl);
-      if (result == null) {
-        throw const FormatException('No Jellyfin or Emby server at this address');
+      if (result == null || result.serverType != ServerType.jellyfin) {
+        throw const FormatException('No Jellyfin server at this address');
       }
       return (
         result.info,

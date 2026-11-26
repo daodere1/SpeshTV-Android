@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:server_core/server_core.dart' show ServerType;
+
 import '../models/server.dart';
 import '../models/user.dart';
 
@@ -49,17 +51,21 @@ class AuthenticationStore {
         entry.key,
         Map<String, dynamic>.from(entry.value as Map),
       );
-    }).toList();
+    }).where((server) => server.serverType == ServerType.jellyfin).toList();
   }
 
   Server? getServer(String serverId) {
     final raw = _servers[serverId];
     if (raw == null) return null;
     final serverData = Map<String, dynamic>.from(raw as Map);
-    return Server.fromJson(serverId, serverData);
+    final server = Server.fromJson(serverId, serverData);
+    return server.serverType == ServerType.jellyfin ? server : null;
   }
 
   Future<void> putServer(Server server) async {
+    if (server.serverType != ServerType.jellyfin) {
+      throw ArgumentError('Only Jellyfin servers are supported');
+    }
     final servers = Map<String, dynamic>.from(_servers);
     final serverJson = Map<String, dynamic>.from(server.toJson());
     final existing = servers[server.id];

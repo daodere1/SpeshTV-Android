@@ -29,8 +29,7 @@ abstract class ServerWebSocketClient {
   factory ServerWebSocketClient.forServer(MediaServerClient client) {
     return switch (client.serverType) {
       ServerType.jellyfin => JellyfinWebSocketClient(client),
-      ServerType.emby => EmbyWebSocketClient(client),
-      ServerType.plex => PlexWebSocketClient(client),
+      _ => throw UnsupportedError('Only Jellyfin sockets are supported'),
     };
   }
 }
